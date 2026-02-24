@@ -1,0 +1,198 @@
+import 'package:flutter/material.dart';
+
+import '../core/theme/design_tokens.dart';
+import '../core/animations/animation_presets.dart';
+import '../features/dashboard/dashboard_screen.dart';
+import '../features/holdings/holdings_list_screen.dart';
+import '../features/alerts/alerts_screen.dart';
+import '../features/assistant/assistant_screen.dart';
+import '../features/import/import_center_screen.dart';
+
+class VirenRouter extends StatefulWidget {
+  const VirenRouter({super.key});
+
+  @override
+  State<VirenRouter> createState() => _VirenRouterState();
+}
+
+class _VirenRouterState extends State<VirenRouter> {
+  late final PageController _pageController;
+  int _currentIndex = 0;
+
+  final List<Widget> _screens = [
+    const DashboardScreen(),
+    const HoldingsListScreen(),
+    const AlertsScreen(),
+    const AssistantScreen(),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController(initialPage: _currentIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _onPageChanged(int index) {
+    setState(() {
+      _currentIndex = index;
+    });
+  }
+
+  void _onBottomNavTapped(int index) {
+    _pageController.animateToPage(
+      index,
+      duration: AnimationPresets.durationNormal,
+      curve: AnimationPresets.entrance,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: DesignTokens.graphiteBase,
+      body: PageView(
+        controller: _pageController,
+        onPageChanged: _onPageChanged,
+        physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()), 
+        children: _screens.map((screen) {
+          return TickerMode(
+            enabled: _currentIndex == _screens.indexOf(screen),
+            child: screen,
+          );
+        }).toList(),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          Navigator.of(context).push(
+             PageRouteBuilder(
+                pageBuilder: (context, animation, secondaryAnimation) => const ImportCenterScreen(),
+                transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                   const begin = Offset(0.0, 1.0);
+                   const end = Offset.zero;
+                   final tween = Tween(begin: begin, end: end).chain(CurveTween(curve: AnimationPresets.entrance));
+                   final offsetAnimation = animation.drive(tween);
+                   return SlideTransition(position: offsetAnimation, child: child);
+                },
+                transitionDuration: AnimationPresets.durationNormal,
+             )
+          );
+        },
+        backgroundColor: DesignTokens.obsidianTeal,
+        foregroundColor: DesignTokens.textHighContrast,
+        elevation: 0,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: const Icon(Icons.add_rounded, size: 28),
+      ),
+      bottomNavigationBar: _MorphingBottomNav(
+        currentIndex: _currentIndex,
+        onTap: _onBottomNavTapped,
+      ),
+    );
+  }
+}
+
+class _MorphingBottomNav extends StatelessWidget {
+  final int currentIndex;
+  final ValueChanged<int> onTap;
+
+  const _MorphingBottomNav({
+    required this.currentIndex,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Custom bottom nav indicating active state using a morphing top border per requirements
+    // and using theme references.
+    return Container(
+      color: DesignTokens.graphiteSurface,
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+           height: 64,
+           child: Stack(
+             children: [
+                Row(
+                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                   children: [
+                      _NavItem(icon: Icons.dashboard_rounded, label: 'Overview', isActive: currentIndex == 0, onTap: () => onTap(0)),
+                      _NavItem(icon: Icons.account_balance_wallet_rounded, label: 'Holdings', isActive: currentIndex == 1, onTap: () => onTap(1)),
+                      _NavItem(icon: Icons.insights_rounded, label: 'Insights', isActive: currentIndex == 2, onTap: () => onTap(2)),
+                      _NavItem(icon: Icons.bolt_rounded, label: 'Assistant', isActive: currentIndex == 3, onTap: () => onTap(3)),
+                   ],
+                ),
+                // Animated Indicator
+                AnimatedPositioned(
+                  duration: AnimationPresets.durationFast,
+                  curve: AnimationPresets.entrance,
+                  top: 0,
+                  left: (MediaQuery.of(context).size.width / 4) * currentIndex + (MediaQuery.of(context).size.width / 8) - 16,
+                  child: Container(
+                    width: 32,
+                    height: 3,
+                    decoration: BoxDecoration(
+                      color: DesignTokens.obsidianTeal,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+             ],
+           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NavItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  const _NavItem({
+    required this.icon,
+    required this.label,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            AnimatedScale(
+              scale: isActive ? 1.0 : 0.9,
+              duration: AnimationPresets.durationFast,
+              curve: AnimationPresets.micro,
+              child: Icon(
+                icon,
+                size: 22,
+                color: isActive ? DesignTokens.obsidianTeal : DesignTokens.textMediumContrast,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+               label,
+               style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                 fontSize: 10,
+                 color: isActive ? DesignTokens.obsidianTeal : DesignTokens.textMediumContrast,
+               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Viren - Settings &amp; Privacy</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#0e8b8b",
+                        "primary-content": "#ffffff",
+                        "background-light": "#f6f8f8",
+                        "background-dark": "#112222",
+                        "surface-dark": "#1a3333",
+                        "surface-light": "#ffffff",
+                        "text-primary-dark": "#e0f2f2",
+                        "text-secondary-dark": "#92c8c8",
+                        "danger": "#ef4444",
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.5rem", "lg": "1rem", "xl": "1.5rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-text-primary-dark font-display antialiased overflow-hidden">
+<div class="relative flex h-full max-h-screen min-h-screen w-full flex-col overflow-hidden">
+<!-- Header -->
+<div class="flex items-center px-4 pb-2 pt-14 justify-between bg-background-light dark:bg-background-dark sticky top-0 z-10 border-b border-gray-200 dark:border-[#244747]">
+<button class="flex size-10 items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-surface-dark transition-colors">
+<span class="material-symbols-outlined text-slate-900 dark:text-white" style="font-size: 24px;">arrow_back</span>
+</button>
+<h2 class="text-slate-900 dark:text-white text-lg font-bold leading-tight tracking-[-0.015em] flex-1 text-center pr-10">Settings &amp; Privacy</h2>
+</div>
+<!-- Scrollable Content -->
+<div class="flex-1 overflow-y-auto pb-24">
+<!-- Section: Appearance -->
+<div class="px-4 pt-6 pb-2">
+<h3 class="text-slate-900 dark:text-white text-lg font-bold leading-tight tracking-[-0.015em]">Appearance</h3>
+</div>
+<div class="flex flex-col">
+<!-- Calm Mode -->
+<div class="flex items-center gap-4 px-4 min-h-[72px] py-2 justify-between hover:bg-gray-50 dark:hover:bg-surface-dark/50 transition-colors cursor-pointer group">
+<div class="flex items-center gap-4">
+<div class="flex items-center justify-center rounded-lg bg-gray-100 dark:bg-[#244747] text-primary dark:text-white shrink-0 size-10 sm:size-12">
+<span class="material-symbols-outlined" style="font-size: 24px;">spa</span>
+</div>
+<div class="flex flex-col justify-center">
+<p class="text-slate-900 dark:text-white text-base font-medium leading-normal line-clamp-1">Calm Mode</p>
+<p class="text-slate-500 dark:text-[#92c8c8] text-sm font-normal leading-normal line-clamp-2">Reduces interface animations &amp; blur</p>
+</div>
+</div>
+<div class="shrink-0">
+<label class="relative flex h-[31px] w-[51px] cursor-pointer items-center rounded-full border-none bg-gray-300 dark:bg-[#244747] p-0.5 has-[:checked]:justify-end has-[:checked]:bg-primary transition-all duration-300">
+<div class="h-full w-[27px] rounded-full bg-white shadow-sm"></div>
+<input checked="" class="invisible absolute" type="checkbox"/>
+</label>
+</div>
+</div>
+</div>
+<!-- Section: Backup & Sync -->
+<div class="px-4 pt-6 pb-2">
+<h3 class="text-slate-900 dark:text-white text-lg font-bold leading-tight tracking-[-0.015em]">Backup &amp; Sync</h3>
+</div>
+<div class="flex flex-col">
+<!-- Cloud Sync -->
+<div class="flex items-center gap-4 px-4 min-h-[72px] py-2 justify-between hover:bg-gray-50 dark:hover:bg-surface-dark/50 transition-colors cursor-pointer">
+<div class="flex items-center gap-4">
+<div class="flex items-center justify-center rounded-lg bg-gray-100 dark:bg-[#244747] text-primary dark:text-white shrink-0 size-10 sm:size-12">
+<span class="material-symbols-outlined" style="font-size: 24px;">cloud_upload</span>
+</div>
+<div class="flex flex-col justify-center">
+<div class="flex items-center gap-2">
+<p class="text-slate-900 dark:text-white text-base font-medium leading-normal line-clamp-1">Cloud Sync</p>
+<span class="px-2 py-0.5 rounded-full bg-primary/20 text-primary text-[10px] font-bold uppercase tracking-wider">Optional</span>
+</div>
+<p class="text-slate-500 dark:text-[#92c8c8] text-sm font-normal leading-normal line-clamp-2">Securely backup via Supabase</p>
+</div>
+</div>
+<div class="shrink-0">
+<label class="relative flex h-[31px] w-[51px] cursor-pointer items-center rounded-full border-none bg-gray-300 dark:bg-[#244747] p-0.5 has-[:checked]:justify-end has-[:checked]:bg-primary transition-all duration-300">
+<div class="h-full w-[27px] rounded-full bg-white shadow-sm"></div>
+<input class="invisible absolute" type="checkbox"/>
+</label>
+</div>
+</div>
+<!-- Last Backup Info (Static Item) -->
+<div class="flex items-center gap-4 px-4 min-h-[56px] py-2 justify-between opacity-60">
+<div class="flex items-center gap-4 pl-[calc(3rem+16px)]">
+<p class="text-slate-500 dark:text-[#92c8c8] text-sm font-normal">Last local backup: Today, 09:41 AM</p>
+</div>
+</div>
+</div>
+<!-- Section: Security -->
+<div class="px-4 pt-6 pb-2">
+<h3 class="text-slate-900 dark:text-white text-lg font-bold leading-tight tracking-[-0.015em]">Security</h3>
+</div>
+<div class="flex flex-col">
+<!-- Face ID -->
+<div class="flex items-center gap-4 px-4 min-h-[72px] py-2 justify-between hover:bg-gray-50 dark:hover:bg-surface-dark/50 transition-colors cursor-pointer">
+<div class="flex items-center gap-4">
+<div class="flex items-center justify-center rounded-lg bg-gray-100 dark:bg-[#244747] text-primary dark:text-white shrink-0 size-10 sm:size-12">
+<span class="material-symbols-outlined" style="font-size: 24px;">face</span>
+</div>
+<div class="flex flex-col justify-center">
+<p class="text-slate-900 dark:text-white text-base font-medium leading-normal line-clamp-1">Face ID</p>
+<p class="text-slate-500 dark:text-[#92c8c8] text-sm font-normal leading-normal line-clamp-2">Require biometric unlock</p>
+</div>
+</div>
+<div class="shrink-0">
+<label class="relative flex h-[31px] w-[51px] cursor-pointer items-center rounded-full border-none bg-gray-300 dark:bg-[#244747] p-0.5 has-[:checked]:justify-end has-[:checked]:bg-primary transition-all duration-300">
+<div class="h-full w-[27px] rounded-full bg-white shadow-sm"></div>
+<input checked="" class="invisible absolute" type="checkbox"/>
+</label>
+</div>
+</div>
+<!-- Enable Encryption -->
+<div class="flex items-center gap-4 px-4 min-h-[72px] py-2 justify-between hover:bg-gray-50 dark:hover:bg-surface-dark/50 transition-colors cursor-pointer">
+<div class="flex items-center gap-4">
+<div class="flex items-center justify-center rounded-lg bg-gray-100 dark:bg-[#244747] text-primary dark:text-white shrink-0 size-10 sm:size-12">
+<span class="material-symbols-outlined" style="font-size: 24px;">lock</span>
+</div>
+<div class="flex flex-col justify-center">
+<p class="text-slate-900 dark:text-white text-base font-medium leading-normal line-clamp-1">End-to-End Encryption</p>
+<p class="text-slate-500 dark:text-[#92c8c8] text-sm font-normal leading-normal line-clamp-2">Encrypt data before sync</p>
+</div>
+</div>
+<div class="shrink-0">
+<span class="material-symbols-outlined text-slate-400 dark:text-[#244747]" style="font-size: 24px;">chevron_right</span>
+</div>
+</div>
+<!-- Purge Data -->
+<div class="mt-4 mx-4">
+<button class="w-full flex items-center justify-between p-4 rounded-xl border border-danger/30 bg-danger/5 hover:bg-danger/10 transition-colors group">
+<div class="flex items-center gap-4">
+<div class="flex items-center justify-center rounded-lg bg-danger/10 text-danger shrink-0 size-10">
+<span class="material-symbols-outlined" style="font-size: 20px;">delete_forever</span>
+</div>
+<div class="flex flex-col items-start">
+<p class="text-danger text-base font-medium leading-normal">Purge Local Data</p>
+<p class="text-danger/70 text-sm font-normal text-left">Irreversible action</p>
+</div>
+</div>
+<span class="material-symbols-outlined text-danger/50 group-hover:text-danger" style="font-size: 20px;">arrow_forward</span>
+</button>
+</div>
+</div>
+<!-- Footer Info -->
+<div class="px-4 py-8 text-center">
+<p class="text-xs text-slate-400 dark:text-[#5e7c7c]">Viren v2.4.0 (Build 4092)</p>
+<p class="text-xs text-slate-400 dark:text-[#5e7c7c] mt-1">Made with privacy in mind.</p>
+</div>
+</div>
+<!-- Bottom Navigation -->
+<div class="bg-background-light dark:bg-[#1a3333] border-t border-gray-200 dark:border-[#244747] px-4 pb-6 pt-2 absolute bottom-0 w-full z-20">
+<div class="flex justify-between items-end">
+<a class="flex flex-1 flex-col items-center justify-end gap-1 text-slate-400 dark:text-[#92c8c8] hover:text-primary dark:hover:text-white transition-colors group" href="#">
+<div class="flex h-8 items-center justify-center group-hover:-translate-y-0.5 transition-transform duration-200">
+<span class="material-symbols-outlined" style="font-size: 24px;">pie_chart</span>
+</div>
+<span class="text-[10px] font-medium">Overview</span>
+</a>
+<a class="flex flex-1 flex-col items-center justify-end gap-1 text-slate-400 dark:text-[#92c8c8] hover:text-primary dark:hover:text-white transition-colors group" href="#">
+<div class="flex h-8 items-center justify-center group-hover:-translate-y-0.5 transition-transform duration-200">
+<span class="material-symbols-outlined" style="font-size: 24px;">show_chart</span>
+</div>
+<span class="text-[10px] font-medium">Invest</span>
+</a>
+<a class="flex flex-1 flex-col items-center justify-end gap-1 text-slate-400 dark:text-[#92c8c8] hover:text-primary dark:hover:text-white transition-colors group" href="#">
+<div class="flex h-8 items-center justify-center group-hover:-translate-y-0.5 transition-transform duration-200">
+<span class="material-symbols-outlined" style="font-size: 24px;">account_balance_wallet</span>
+</div>
+<span class="text-[10px] font-medium">Wallet</span>
+</a>
+<a class="flex flex-1 flex-col items-center justify-end gap-1 text-primary dark:text-white transition-colors" href="#">
+<div class="flex h-8 items-center justify-center">
+<span class="material-symbols-outlined fill-current" style="font-size: 24px; font-variation-settings: 'FILL' 1;">settings</span>
+</div>
+<span class="text-[10px] font-medium">Settings</span>
+</a>
+</div>
+</div>
+</div>
+</body></html>

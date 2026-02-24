@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Viren - Premium Investment Companion</title>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Playfair+Display:wght@700&amp;display=swap" rel="stylesheet"/>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Theme Configuration -->
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#0e8b8b",
+                        "accent-gold": "#C9A66B",
+                        "background-light": "#f6f8f8",
+                        "background-dark": "#0a1414", 
+                        "background-card": "#112121",
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"],
+                        "serif": ["Playfair Display", "serif"],
+                    },
+                    borderRadius: {"DEFAULT": "0.5rem", "lg": "1rem", "xl": "1.5rem", "2xl": "2rem", "full": "9999px"},
+                    backgroundImage: {
+                        'nebula': "radial-gradient(circle at 50% 30%, rgba(14, 139, 139, 0.15) 0%, rgba(14, 139, 139, 0.05) 40%, transparent 70%), radial-gradient(circle at 80% 80%, rgba(14, 139, 139, 0.08) 0%, transparent 50%)",
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        /* Custom animations for the focus line */
+        @keyframes expand {
+            0% { width: 0; opacity: 0; }
+            50% { width: 60px; opacity: 1; }
+            100% { width: 40px; opacity: 0.8; }
+        }
+        
+        .animate-focus-line {
+            animation: expand 1.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            animation-delay: 0.5s;
+        }
+
+        /* Subtle float animation for background elements */
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+            100% { transform: translateY(0px); }
+        }
+
+        .animate-float {
+            animation: float 8s ease-in-out infinite;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 antialiased overflow-hidden">
+<!-- Main Container -->
+<div class="relative flex h-screen w-full flex-col items-center justify-between overflow-hidden bg-background-light dark:bg-background-dark transition-colors duration-500">
+<!-- Background Effects -->
+<div class="absolute inset-0 z-0 pointer-events-none">
+<!-- Nebula Gradient Overlay -->
+<div class="absolute inset-0 bg-nebula opacity-80" data-alt="Abstract teal nebula gradient background"></div>
+<!-- Subtle Noise Texture Overlay (Simulated with CSS) -->
+<div class="absolute inset-0 opacity-[0.03] mix-blend-overlay" style="background-image: url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22/%3E%3C/svg%3E');"></div>
+</div>
+<!-- Decorative Top Element -->
+<div class="absolute top-[-10%] right-[-10%] w-64 h-64 bg-primary/10 rounded-full blur-3xl animate-float z-0"></div>
+<div class="absolute bottom-[20%] left-[-5%] w-48 h-48 bg-primary/5 rounded-full blur-2xl animate-float z-0" style="animation-delay: 2s;"></div>
+<!-- Content Spacer (Top) -->
+<div class="flex-1 w-full flex flex-col items-center justify-center z-10 pt-20">
+<!-- Logo Section -->
+<div class="relative flex flex-col items-center mb-8">
+<!-- Icon (Optional, keeps it minimal as requested, using just Wordmark mostly but icon adds brand anchor) -->
+<div class="mb-6 p-4 rounded-2xl bg-gradient-to-br from-primary/20 to-transparent border border-white/5 backdrop-blur-sm shadow-xl shadow-primary/5">
+<span class="material-symbols-outlined text-4xl text-primary">token</span>
+</div>
+<!-- Wordmark -->
+<h1 class="text-slate-900 dark:text-white text-5xl font-serif font-bold tracking-tight mb-2 relative z-10">
+                    Viren
+                </h1>
+<!-- Animated Focus Line -->
+<div class="h-1 bg-primary rounded-full animate-focus-line w-0 opacity-0 shadow-[0_0_15px_rgba(14,139,139,0.6)]"></div>
+</div>
+<!-- Microcopy -->
+<p class="text-slate-600 dark:text-slate-400 text-base font-medium leading-relaxed px-8 text-center max-w-[320px] opacity-0 animate-[fadeIn_1s_ease-out_1s_forwards]">
+                Viren remembers when you don’t.
+            </p>
+<style>
+                @keyframes fadeIn {
+                    from { opacity: 0; transform: translateY(10px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
+            </style>
+</div>
+<!-- Bottom Actions Section -->
+<div class="w-full max-w-md px-6 pb-12 z-10 flex flex-col gap-6 items-center">
+<!-- Primary CTA -->
+<button class="group relative flex w-full cursor-pointer items-center justify-center overflow-hidden rounded-2xl h-14 bg-primary text-white shadow-lg shadow-primary/20 hover:shadow-primary/30 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]">
+<div class="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-500 ease-in-out"></div>
+<span class="relative z-10 text-[17px] font-bold tracking-wide">Open Viren</span>
+<span class="material-symbols-outlined relative z-10 ml-2 text-[20px] group-hover:translate-x-1 transition-transform">arrow_forward</span>
+</button>
+<!-- Secondary Link -->
+<button class="group relative flex items-center justify-center h-10 px-4 bg-transparent text-slate-500 dark:text-slate-400 text-sm font-semibold tracking-wide transition-colors hover:text-slate-900 dark:hover:text-white">
+<span class="relative">
+                    See UI preview
+                    <!-- Gold micro-underline on hover -->
+<span class="absolute bottom-0 left-0 w-0 h-[1.5px] bg-accent-gold transition-all duration-300 group-hover:w-full opacity-80"></span>
+</span>
+</button>
+<!-- Legal / Version (Subtle Footer) -->
+<div class="mt-2 text-[10px] text-slate-400 dark:text-slate-600 font-medium tracking-widest uppercase opacity-60">
+                Secure &amp; Private
+            </div>
+</div>
+</div>
+</body></html>

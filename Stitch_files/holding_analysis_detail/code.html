@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Holding Analysis Detail - Viren</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#0e8b8b",
+                        "background-light": "#f6f8f8",
+                        "background-dark": "#112121",
+                        "surface-dark": "#1a2c2c",
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"]
+                    },
+                    borderRadius: { "DEFAULT": "0.5rem", "lg": "1rem", "xl": "1.5rem", "full": "9999px" },
+                },
+            },
+        }
+    </script>
+<style>
+        /* Custom scrollbar for horizontal scrolling areas */
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display antialiased text-slate-900 dark:text-slate-100 min-h-screen flex flex-col overflow-hidden">
+<!-- Top App Bar -->
+<header class="flex items-center justify-between p-4 pb-2 bg-background-light dark:bg-background-dark sticky top-0 z-10">
+<button class="flex size-10 items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors">
+<span class="material-symbols-outlined text-2xl">expand_more</span>
+</button>
+<div class="flex flex-col items-center">
+<h2 class="text-lg font-bold leading-tight tracking-tight">AAPL</h2>
+<span class="text-xs font-medium text-slate-500 dark:text-slate-400">Apple Inc.</span>
+</div>
+<button class="flex size-10 relative items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors">
+<span class="material-symbols-outlined text-2xl">notifications</span>
+<span class="absolute top-2 right-2 size-2 bg-red-500 rounded-full ring-2 ring-background-light dark:ring-background-dark"></span>
+</button>
+</header>
+<!-- Main Content -->
+<main class="flex-1 overflow-y-auto overflow-x-hidden pb-8">
+<!-- Price Section -->
+<div class="px-6 pt-6 pb-4">
+<h1 class="text-4xl font-bold tracking-tight text-slate-900 dark:text-white">$145.32</h1>
+<div class="flex items-center gap-2 mt-1">
+<span class="text-red-500 font-medium flex items-center text-sm bg-red-500/10 px-1.5 py-0.5 rounded">
+<span class="material-symbols-outlined text-sm mr-0.5">trending_down</span>
+                    1.2%
+                </span>
+<span class="text-slate-500 dark:text-slate-400 text-sm">Today</span>
+</div>
+</div>
+<!-- Alert Banner -->
+<div class="mx-6 mb-6 p-3 bg-red-900/20 border border-red-900/30 rounded-lg flex items-start gap-3">
+<span class="material-symbols-outlined text-red-400 shrink-0 mt-0.5">warning</span>
+<div>
+<p class="text-sm font-medium text-red-200">Price Alert</p>
+<p class="text-xs text-red-300/80 leading-relaxed">This stock hasn’t traded this low since early January. RSI indicates oversold conditions.</p>
+</div>
+</div>
+<!-- Chart Section -->
+<div class="px-0 py-2">
+<!-- Timeframe Selector -->
+<div class="flex justify-between px-6 mb-4">
+<button class="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-colors">1D</button>
+<button class="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-colors">1W</button>
+<button class="text-xs font-medium text-primary bg-primary/10 px-2 py-0.5 rounded-full">1M</button>
+<button class="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-colors">3M</button>
+<button class="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-colors">1Y</button>
+<button class="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-colors">ALL</button>
+</div>
+<!-- Chart Visualization -->
+<div class="relative w-full h-64 bg-gradient-to-b from-transparent to-primary/5 dark:to-primary/5">
+<!-- Grid Lines -->
+<div class="absolute inset-0 flex flex-col justify-between px-6 py-4 pointer-events-none opacity-20">
+<div class="border-b border-slate-400 dark:border-slate-600 w-full h-0"></div>
+<div class="border-b border-slate-400 dark:border-slate-600 w-full h-0"></div>
+<div class="border-b border-slate-400 dark:border-slate-600 w-full h-0"></div>
+<div class="border-b border-slate-400 dark:border-slate-600 w-full h-0"></div>
+</div>
+<!-- Main Chart SVG (Reused/Adapted) -->
+<svg class="absolute inset-0 w-full h-full px-4" preserveaspectratio="none" viewbox="0 0 478 150" xmlns="http://www.w3.org/2000/svg">
+<!-- Gradient Definition -->
+<defs>
+<lineargradient id="chartGradient" x1="0" x2="0" y1="0" y2="1">
+<stop offset="0%" stop-color="#0e8b8b" stop-opacity="0.2"></stop>
+<stop offset="100%" stop-color="#0e8b8b" stop-opacity="0"></stop>
+</lineargradient>
+</defs>
+<!-- Area Fill -->
+<path d="M0 109C18.15 109 18.15 21 36.3 21C54.46 21 54.46 41 72.6 41C90.7 41 90.7 93 108.9 93C127 93 127 33 145.2 33C163.3 33 163.3 101 181.5 101C199.6 101 199.6 61 217.8 61C236 61 236 45 254.1 45C272.3 45 272.3 121 290.4 121C308.6 121 308.6 149 326.7 149C344.9 149 344.9 1 363 1C381.2 1 381.2 81 399.3 81C417.5 81 417.5 129 435.6 129C453.8 129 453.8 25 472 25V150H0V109Z" fill="url(#chartGradient)"></path>
+<!-- Main Line -->
+<path d="M0 109C18.15 109 18.15 21 36.3 21C54.46 21 54.46 41 72.6 41C90.7 41 90.7 93 108.9 93C127 93 127 33 145.2 33C163.3 33 163.3 101 181.5 101C199.6 101 199.6 61 217.8 61C236 61 236 45 254.1 45C272.3 45 272.3 121 290.4 121C308.6 121 308.6 149 326.7 149C344.9 149 344.9 1 363 1C381.2 1 381.2 81 399.3 81C417.5 81 417.5 129 435.6 129C453.8 129 453.8 25 472 25" fill="none" stroke="#0e8b8b" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+<!-- SMA Overlay (Simulated) -->
+<path d="M0 120 C50 110, 150 50, 250 80 S 400 60, 472 40" fill="none" opacity="0.6" stroke="#fbbf24" stroke-dasharray="4 4" stroke-width="1.5"></path>
+</svg>
+<!-- SMA Label -->
+<div class="absolute top-2 right-6 text-[10px] font-medium text-yellow-500/80">SMA 50</div>
+<!-- Volume Bars (Simulated at bottom) -->
+<div class="absolute bottom-0 left-0 right-0 h-12 flex items-end justify-between px-6 gap-1 opacity-30">
+<div class="w-full bg-slate-500 h-[20%] rounded-t-sm"></div>
+<div class="w-full bg-slate-500 h-[40%] rounded-t-sm"></div>
+<div class="w-full bg-red-500 h-[30%] rounded-t-sm"></div>
+<div class="w-full bg-slate-500 h-[60%] rounded-t-sm"></div>
+<div class="w-full bg-slate-500 h-[25%] rounded-t-sm"></div>
+<div class="w-full bg-red-500 h-[45%] rounded-t-sm"></div>
+<div class="w-full bg-slate-500 h-[80%] rounded-t-sm"></div>
+<div class="w-full bg-slate-500 h-[35%] rounded-t-sm"></div>
+<div class="w-full bg-slate-500 h-[50%] rounded-t-sm"></div>
+<div class="w-full bg-red-500 h-[20%] rounded-t-sm"></div>
+<div class="w-full bg-slate-500 h-[55%] rounded-t-sm"></div>
+<div class="w-full bg-slate-500 h-[70%] rounded-t-sm"></div>
+<div class="w-full bg-red-500 h-[30%] rounded-t-sm"></div>
+<div class="w-full bg-slate-500 h-[40%] rounded-t-sm"></div>
+<div class="w-full bg-slate-500 h-[60%] rounded-t-sm"></div>
+</div>
+</div>
+<!-- X Axis Labels -->
+<div class="flex justify-between px-6 mt-2 text-[10px] font-medium text-slate-500 dark:text-slate-500 uppercase tracking-wider">
+<span>09:30</span>
+<span>11:00</span>
+<span>12:30</span>
+<span>14:00</span>
+<span>16:00</span>
+</div>
+</div>
+<!-- Timeline / Chips Section -->
+<div class="mt-8 px-6">
+<h3 class="text-sm font-semibold text-slate-400 mb-3 uppercase tracking-wider">Transaction History</h3>
+<div class="flex gap-3 overflow-x-auto hide-scrollbar pb-2">
+<!-- Buy Chip -->
+<div class="flex h-9 shrink-0 items-center gap-x-2 rounded-lg bg-surface-dark border border-slate-700/50 pl-3 pr-4 shadow-sm">
+<div class="flex items-center justify-center size-5 rounded-full bg-primary/20 text-primary">
+<span class="material-symbols-outlined text-[14px]">arrow_upward</span>
+</div>
+<div class="flex flex-col">
+<span class="text-xs font-semibold text-slate-200">Buy @ $130</span>
+<span class="text-[10px] text-slate-500">Jan 12</span>
+</div>
+</div>
+<!-- Buy Chip -->
+<div class="flex h-9 shrink-0 items-center gap-x-2 rounded-lg bg-surface-dark border border-slate-700/50 pl-3 pr-4 shadow-sm">
+<div class="flex items-center justify-center size-5 rounded-full bg-primary/20 text-primary">
+<span class="material-symbols-outlined text-[14px]">arrow_upward</span>
+</div>
+<div class="flex flex-col">
+<span class="text-xs font-semibold text-slate-200">Buy @ $140</span>
+<span class="text-[10px] text-slate-500">Feb 04</span>
+</div>
+</div>
+<!-- Sell Chip -->
+<div class="flex h-9 shrink-0 items-center gap-x-2 rounded-lg bg-surface-dark border border-slate-700/50 pl-3 pr-4 shadow-sm">
+<div class="flex items-center justify-center size-5 rounded-full bg-red-500/20 text-red-400">
+<span class="material-symbols-outlined text-[14px]">arrow_downward</span>
+</div>
+<div class="flex flex-col">
+<span class="text-xs font-semibold text-slate-200">Sell @ $150</span>
+<span class="text-[10px] text-slate-500">Mar 19</span>
+</div>
+</div>
+<!-- Buy Chip -->
+<div class="flex h-9 shrink-0 items-center gap-x-2 rounded-lg bg-surface-dark border border-slate-700/50 pl-3 pr-4 shadow-sm">
+<div class="flex items-center justify-center size-5 rounded-full bg-primary/20 text-primary">
+<span class="material-symbols-outlined text-[14px]">arrow_upward</span>
+</div>
+<div class="flex flex-col">
+<span class="text-xs font-semibold text-slate-200">Buy @ $145</span>
+<span class="text-[10px] text-slate-500">Apr 02</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Stats Grid -->
+<div class="mt-8 px-6 grid grid-cols-2 gap-4">
+<div class="p-4 rounded-xl bg-surface-dark border border-slate-800">
+<p class="text-xs text-slate-500 mb-1">Market Cap</p>
+<p class="text-lg font-bold text-white">2.4T</p>
+</div>
+<div class="p-4 rounded-xl bg-surface-dark border border-slate-800">
+<p class="text-xs text-slate-500 mb-1">Vol (24h)</p>
+<p class="text-lg font-bold text-white">65.2M</p>
+</div>
+<div class="p-4 rounded-xl bg-surface-dark border border-slate-800">
+<p class="text-xs text-slate-500 mb-1">P/E Ratio</p>
+<p class="text-lg font-bold text-white">28.4</p>
+</div>
+<div class="p-4 rounded-xl bg-surface-dark border border-slate-800">
+<p class="text-xs text-slate-500 mb-1">Div Yield</p>
+<p class="text-lg font-bold text-white">0.58%</p>
+</div>
+</div>
+</main>
+<!-- Bottom Actions -->
+<div class="p-6 bg-background-light dark:bg-background-dark border-t border-slate-200 dark:border-slate-800 sticky bottom-0 z-20">
+<div class="flex gap-4">
+<button class="flex-1 h-12 flex items-center justify-center gap-2 rounded-xl bg-surface-dark text-slate-300 hover:bg-slate-800 hover:text-white transition-colors border border-slate-700/50 font-medium text-sm">
+<span class="material-symbols-outlined text-[20px]">sticky_note_2</span>
+                Attach Note
+            </button>
+<button class="flex-1 h-12 flex items-center justify-center gap-2 rounded-xl bg-surface-dark text-slate-300 hover:bg-slate-800 hover:text-white transition-colors border border-slate-700/50 font-medium text-sm">
+<span class="material-symbols-outlined text-[20px]">flag</span>
+                Mark Reason
+            </button>
+</div>
+<div class="mt-4">
+<button class="w-full h-14 rounded-xl bg-primary hover:bg-primary/90 text-white font-bold text-lg shadow-lg shadow-primary/20 flex items-center justify-center gap-2 transition-all">
+                Trade AAPL
+            </button>
+</div>
+</div>
+</body></html>

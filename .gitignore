@@ -1,0 +1,27 @@
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Android
+.settings/
+.project
+.classpath
+build/
+*.iml
+.gradle/
+local.properties
+
+# Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+
+# iOS
+service_account.json
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+

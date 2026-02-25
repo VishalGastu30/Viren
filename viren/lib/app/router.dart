@@ -7,6 +7,7 @@ import '../features/holdings/holdings_list_screen.dart';
 import '../features/alerts/alerts_screen.dart';
 import '../features/assistant/assistant_screen.dart';
 import '../features/import/import_center_screen.dart';
+import '../features/import/manual_trade_entry_screen.dart';
 
 class VirenRouter extends StatefulWidget {
   const VirenRouter({super.key});
@@ -69,17 +70,51 @@ class _VirenRouterState extends State<VirenRouter> {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
-          Navigator.of(context).push(
-             PageRouteBuilder(
-                pageBuilder: (context, animation, secondaryAnimation) => const ImportCenterScreen(),
-                transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                   const begin = Offset(0.0, 1.0);
-                   const end = Offset.zero;
-                   final tween = Tween(begin: begin, end: end).chain(CurveTween(curve: AnimationPresets.entrance));
-                   final offsetAnimation = animation.drive(tween);
-                   return SlideTransition(position: offsetAnimation, child: child);
-                },
-                transitionDuration: AnimationPresets.durationNormal,
+          showModalBottomSheet(
+             context: context,
+             backgroundColor: Colors.transparent,
+             builder: (ctx) => Container(
+                margin: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                   color: DesignTokens.graphiteSurface,
+                   borderRadius: BorderRadius.circular(24),
+                   border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+                ),
+                child: Column(
+                   mainAxisSize: MainAxisSize.min,
+                   children: [
+                      ListTile(
+                         leading: const Icon(Icons.edit_rounded, color: DesignTokens.obsidianTeal),
+                         title: Text('Manual Trade', style: Theme.of(context).textTheme.titleMedium),
+                         subtitle: Text('Record a single execution', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast)),
+                         onTap: () {
+                            Navigator.pop(ctx);
+                            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ManualTradeEntryScreen()));
+                         },
+                      ),
+                      const SizedBox(height: 8),
+                      ListTile(
+                         leading: const Icon(Icons.upload_file_rounded, color: DesignTokens.ashGold),
+                         title: Text('Import File', style: Theme.of(context).textTheme.titleMedium),
+                         subtitle: Text('Upload PDF/CSV from broker', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast)),
+                         onTap: () {
+                            Navigator.pop(ctx);
+                            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ImportCenterScreen()));
+                         },
+                      ),
+                      const SizedBox(height: 8),
+                      ListTile(
+                         leading: const Icon(Icons.mail_outline_rounded, color: DesignTokens.textHighContrast),
+                         title: Text('Scan Email', style: Theme.of(context).textTheme.titleMedium),
+                         subtitle: Text('Auto-detect contract notes', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast)),
+                         onTap: () {
+                            Navigator.pop(ctx);
+                            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ImportCenterScreen()));
+                         },
+                      ),
+                      const SizedBox(height: 16),
+                   ],
+                )
              )
           );
         },

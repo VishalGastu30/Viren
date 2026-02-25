@@ -99,60 +99,28 @@ class _ImportCenterScreenState extends State<ImportCenterScreen> with SingleTick
             ),
             const SizedBox(height: 48),
 
-            // Drop zone
-            GestureDetector(
-              onTap: _isScanning ? null : _simulateScan,
-              child: AnimatedBuilder(
-                animation: _pulseAnimation,
-                builder: (context, child) {
-                  return Container(
-                    height: 240,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: DesignTokens.graphiteSurface,
-                      borderRadius: BorderRadius.circular(32),
-                      border: Border.all(
-                        color: _isScanning 
-                          ? DesignTokens.obsidianTeal.withValues(alpha: 0.5) 
-                          : Colors.white.withValues(alpha: 0.05),
-                        width: _isScanning ? 2.0 : 1.0,
-                      ),
-                      boxShadow: _isScanning ? [
-                        BoxShadow(
-                          color: DesignTokens.obsidianTeal.withValues(alpha: 0.1),
-                          blurRadius: 20 * _pulseAnimation.value,
-                          spreadRadius: 10 * _pulseAnimation.value,
-                        )
-                      ] : [],
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Transform.scale(
-                          scale: _isScanning ? _pulseAnimation.value : 1.0,
-                          child: Icon(
-                            _isScanning ? Icons.document_scanner_rounded : Icons.upload_file_rounded,
-                            size: 64,
-                            color: _isScanning ? DesignTokens.obsidianTeal : DesignTokens.textMediumContrast,
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-                        Text(
-                          _isScanning ? 'Intelligently Parsing...' : 'Tap to select PDF/CSV',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        if (!_isScanning) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            'Supported: Zerodha, Groww (Mock)',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast),
-                          ),
-                        ]
-                      ],
-                    ),
-                  );
-                },
-              ),
+            // Import Action Cards
+            _ImportActionCard(
+              icon: Icons.upload_file_rounded,
+              title: 'Upload Statement',
+              description: 'Drop a CSV or PDF from your broker.',
+              onTap: _isScanning ? () {} : _simulateScan,
+              isScanning: _isScanning,
+              pulseAnimation: _pulseAnimation,
+            ),
+            const SizedBox(height: 16),
+            _ImportActionCard(
+              icon: Icons.mail_outline_rounded,
+              title: 'Connect Email',
+              description: 'Auto-scan for contract notes.',
+              onTap: () {},
+            ),
+            const SizedBox(height: 16),
+            _ImportActionCard(
+              icon: Icons.edit_rounded,
+              title: 'Manual Entry',
+              description: 'Record a single trade with your thesis.',
+              onTap: () {},
             ),
 
             const SizedBox(height: 48),
@@ -220,7 +188,7 @@ class _ParseHistoryItem extends StatelessWidget {
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: DesignTokens.graphiteSurface,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(24),
         border: Border.all(color: Colors.white.withValues(alpha: 0.03)),
       ),
       child: Row(
@@ -231,7 +199,7 @@ class _ParseHistoryItem extends StatelessWidget {
              height: 40,
              decoration: BoxDecoration(
                color: iconColor.withValues(alpha: 0.1),
-               borderRadius: BorderRadius.circular(10),
+               borderRadius: BorderRadius.circular(12),
              ),
              child: Center(
                child: Icon(
@@ -301,3 +269,106 @@ class _ConfidenceBadge extends StatelessWidget {
     );
   }
 }
+
+class _ImportActionCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String description;
+  final VoidCallback onTap;
+  final bool isScanning;
+  final Animation<double>? pulseAnimation;
+
+  const _ImportActionCard({
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.onTap,
+    this.isScanning = false,
+    this.pulseAnimation,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    Widget content = Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: DesignTokens.graphiteSurface,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: isScanning 
+            ? DesignTokens.obsidianTeal.withValues(alpha: 0.5) 
+            : Colors.white.withValues(alpha: 0.05),
+          width: isScanning ? 2.0 : 1.0,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: isScanning ? DesignTokens.obsidianTeal.withValues(alpha: 0.1) : DesignTokens.graphiteBase,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(
+              icon,
+              color: isScanning ? DesignTokens.obsidianTeal : DesignTokens.textMediumContrast,
+              size: 28,
+            ),
+          ),
+          const SizedBox(width: 20),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isScanning ? 'Scanning...' : title,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontSize: 18),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  description,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: DesignTokens.textMediumContrast,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 16),
+          const Icon(Icons.chevron_right_rounded, color: DesignTokens.textMediumContrast),
+        ],
+      ),
+    );
+
+    if (pulseAnimation != null && isScanning) {
+      return AnimatedBuilder(
+        animation: pulseAnimation!,
+        builder: (context, child) {
+          return Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: DesignTokens.obsidianTeal.withValues(alpha: 0.1),
+                  blurRadius: 20 * pulseAnimation!.value,
+                  spreadRadius: 10 * pulseAnimation!.value,
+                )
+              ],
+            ),
+            child: Transform.scale(
+              scale: 1.0 + (0.02 * pulseAnimation!.value),
+              child: content,
+            ),
+          );
+        },
+      );
+    }
+
+    return GestureDetector(
+      onTap: onTap,
+      child: content,
+    );
+  }
+}
+

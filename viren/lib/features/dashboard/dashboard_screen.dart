@@ -6,7 +6,10 @@ import '../../core/theme/design_tokens.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../widgets/charts/allocation_donut_chart.dart';
 import '../../widgets/charts/monthly_sparkline.dart';
+import '../../widgets/confidence_meter_widget.dart';
+import '../../mock_data/behavioral_mock.dart';
 import '../../core/animations/animation_presets.dart';
+import '../settings/settings_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -52,6 +55,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final headerOpacity = (1 - (_scrollOffset / 150)).clamp(0.0, 1.0);
     return Scaffold(
       backgroundColor: DesignTokens.graphiteBase,
+      appBar: AppBar(
+        backgroundColor: DesignTokens.graphiteBase,
+        elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined, color: DesignTokens.textMediumContrast),
+            onPressed: () {
+              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
+            },
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
       body: SafeArea(
         child: CustomScrollView(
           controller: _scrollController,
@@ -63,7 +79,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: Transform.translate(
                   offset: Offset(0, headerParallax),
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 40, 24, 24),
+                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -87,13 +103,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
             SliverToBoxAdapter(
               child: TweenAnimationBuilder<double>(
                 tween: Tween<double>(begin: 0, end: _isVisible ? 1 : 0),
-                duration: const Duration(milliseconds: 600),
-                curve: Curves.easeOutCubic,
+                duration: AnimationPresets.durationNormal,
+                curve: AnimationPresets.entrance,
                 builder: (context, val, child) {
                    return Opacity(
                      opacity: val,
                      child: Transform.translate(
-                       offset: Offset(0, 20 * (1 - val)),
+                       offset: Offset(0, 20 * (1 - val) * AnimationPresets.parallaxFactor),
                        child: child,
                      ),
                    );
@@ -152,13 +168,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
             SliverToBoxAdapter(
               child: TweenAnimationBuilder<double>(
                 tween: Tween<double>(begin: 0, end: _isVisible ? 1 : 0),
-                duration: const Duration(milliseconds: 700),
-                curve: Curves.easeOutCubic,
+                duration: AnimationPresets.durationNormal,
+                curve: AnimationPresets.entrance,
                 builder: (context, val, child) {
                   return Opacity(
                     opacity: val,
                     child: Transform.translate(
-                      offset: Offset(0, 30 * (1 - val)),
+                      offset: Offset(0, 30 * (1 - val) * AnimationPresets.parallaxFactor),
                       child: child,
                     ),
                   );
@@ -254,13 +270,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
             SliverToBoxAdapter(
               child: TweenAnimationBuilder<double>(
                 tween: Tween<double>(begin: 0, end: _isVisible ? 1 : 0),
-                duration: const Duration(milliseconds: 800),
-                curve: Curves.easeOutCubic,
+                duration: AnimationPresets.durationSlow,
+                curve: AnimationPresets.entrance,
                 builder: (context, val, child) {
                   return Opacity(
                     opacity: val,
                     child: Transform.translate(
-                      offset: Offset(0, 40 * (1 - val)),
+                      offset: Offset(0, 40 * (1 - val) * AnimationPresets.parallaxFactor),
                       child: child,
                     ),
                   );
@@ -286,6 +302,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ],
                     ),
                   ),
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: TweenAnimationBuilder<double>(
+                tween: Tween<double>(begin: 0, end: _isVisible ? 1 : 0),
+                duration: AnimationPresets.durationSlow,
+                curve: AnimationPresets.entrance,
+                builder: (context, val, child) {
+                  return Opacity(
+                    opacity: val,
+                    child: Transform.translate(
+                      offset: Offset(0, 50 * (1 - val) * AnimationPresets.parallaxFactor),
+                      child: child,
+                    ),
+                  );
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8.0),
+                  child: ConfidenceMeterWidget(metric: BehavioralMock.metric),
                 ),
               ),
             ),

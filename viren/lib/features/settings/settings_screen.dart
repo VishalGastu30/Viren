@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/theme/design_tokens.dart';
 import '../../core/animations/animation_presets.dart';
+import '../settings/style_guide_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -12,127 +13,568 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  // Use the global state for simplicity in this frontend test
+  // Experience & Motion
   bool _isCalmMode = AnimationPresets.calmModeEnabled;
+  AnimationIntensity _intensity = AnimationPresets.intensity;
+
+  // Security
+  bool _biometricLock = false;
+  int _lockTimeoutIndex = 1; // 0=Immediate, 1=1 min, 2=5 min, 3=15 min
+  static const _lockOptions = ['Immediately', '1 minute', '5 minutes', '15 minutes'];
+
+  // Intelligence Controls
+  double _alertSensitivity = 1.0; // 0=Conservative, 1=Balanced, 2=Observant
+  int _insightFrequencyIndex = 1; // 0=Minimal, 1=Normal, 2=Reflective
+  bool _hideLowConfidence = false;
+  static const _insightFrequencyOptions = ['Minimal', 'Normal', 'Reflective'];
+
+  // Appearance
+  bool _useGoldAccent = false;
+  double _fontScale = 1.0;
+  bool _densecharts = false;
+
+  // Cloud
+  bool _simulatingBackup = false;
+
+  void _simulateBackup() {
+    setState(() => _simulatingBackup = true);
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) {
+        setState(() => _simulatingBackup = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(children: [
+              const Icon(Icons.check_circle_outline_rounded, color: DesignTokens.obsidianTeal, size: 18),
+              const SizedBox(width: 12),
+              Text('Backup complete — 6 holdings, 4 trades synced.'),
+            ]),
+            backgroundColor: DesignTokens.graphiteSurface,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            margin: const EdgeInsets.all(24),
+          ),
+        );
+      }
+    });
+  }
+
+  void _showResetDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: DesignTokens.graphiteSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                const Icon(Icons.warning_amber_rounded, color: DesignTokens.crimsonWarning),
+                const SizedBox(width: 12),
+                Text('Wipe Local Data', style: Theme.of(context).textTheme.titleLarge?.copyWith(color: DesignTokens.crimsonWarning)),
+              ]),
+              const SizedBox(height: 16),
+              Text(
+                'This will permanently erase all holdings, trades, journal entries, and settings from this device.\n\nThis action is irreversible.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(height: 1.6, color: DesignTokens.textMediumContrast),
+              ),
+              const SizedBox(height: 28),
+              Row(children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                    child: Text('Cancel', style: Theme.of(context).textTheme.bodyMedium),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: const Text('All local data wiped.'),
+                          backgroundColor: DesignTokens.crimsonWarning,
+                          behavior: SnackBarBehavior.floating,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          margin: const EdgeInsets.all(24),
+                        ),
+                      );
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: DesignTokens.crimsonWarning,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                    child: const Text('Wipe Everything'),
+                  ),
+                ),
+              ]),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showExportSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: DesignTokens.graphiteSurface,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(color: DesignTokens.borderSubtle, borderRadius: BorderRadius.circular(2)),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text('Export Preview', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            Text('Your local vault in JSON format. No data leaves this device unless you explicitly share it.', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast, height: 1.4)),
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: DesignTokens.graphiteBase,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: DesignTokens.borderSubtle),
+              ),
+              child: Text(
+                '{\n  "holdings": 6,\n  "trades": 4,\n  "journal": 4,\n  "exported_at": "2024-02-25T21:00:00Z",\n  "version": "1.0.0"\n}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontFamily: 'monospace',
+                  color: DesignTokens.obsidianTeal,
+                  height: 1.7,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.share_rounded, size: 18),
+                label: const Text('Share Export'),
+                onPressed: () => Navigator.pop(ctx),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: DesignTokens.obsidianTeal,
+                  foregroundColor: DesignTokens.graphiteBase,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+              ),
+            )
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: DesignTokens.graphiteBase,
       appBar: AppBar(
-        title: Text(
-          'Settings',
-          style: Theme.of(context).textTheme.titleLarge,
-        ),
+        title: Text('Settings', style: Theme.of(context).textTheme.titleLarge),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new_rounded),
           onPressed: () => Navigator.of(context).pop(),
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StyleGuideScreen())),
+            child: Text('Style Guide', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast)),
+          )
+        ],
       ),
       body: ListView(
         physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.fromLTRB(24, 8, 24, 80),
         children: [
-          // Theme Group
-          _SettingsGroupHeader(title: 'App Experience'),
-          const SizedBox(height: 16),
-          _SettingsSection(
-            children: [
-              _SettingsTile(
-                icon: Icons.dark_mode_rounded,
-                title: 'Dark Theme',
-                subtitle: 'Viren is strictly dark-mode first for visual depth.',
-                trailing: CupertinoSwitch(
-                  value: true, 
-                  onChanged: (val) {}, 
-                  activeTrackColor: DesignTokens.obsidianTeal,
-                ),
+
+          // ─── Security & Access ───────────────────────────────────
+          _SectionHeader(title: 'Security & Access'),
+          _SettingsSection(children: [
+            _SettingsTile(
+              icon: Icons.fingerprint_rounded,
+              title: 'Biometric Lock',
+              subtitle: 'Require fingerprint or Face ID on app open and after background timeout. No data leaves device.',
+              trailing: CupertinoSwitch(
+                value: _biometricLock,
+                onChanged: (v) => setState(() => _biometricLock = v),
+                activeTrackColor: DesignTokens.obsidianTeal,
               ),
+            ),
+            if (_biometricLock) ...[
               const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
               _SettingsTile(
-                icon: Icons.animation_rounded,
-                title: 'Calm Mode',
-                subtitle: 'Disable all complex animations, staggers, and transitions for an immediate, brutalist aesthetic.',
-                trailing: CupertinoSwitch(
-                  value: _isCalmMode, 
-                  onChanged: (val) {
-                    setState(() {
-                       _isCalmMode = val;
-                       AnimationPresets.calmModeEnabled = val; // Apply globally
-                    });
-                  }, 
-                  activeTrackColor: DesignTokens.obsidianTeal,
+                icon: Icons.timer_outlined,
+                title: 'Lock After',
+                subtitle: 'Lock the app after this much time in the background.',
+                trailing: CupertinoSlidingSegmentedControl<int>(
+                  groupValue: _lockTimeoutIndex,
+                  backgroundColor: DesignTokens.graphiteBase,
+                  thumbColor: DesignTokens.graphiteSurface,
+                  children: {
+                    for (int i = 0; i < _lockOptions.length; i++)
+                      i: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        child: Text(_lockOptions[i], style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 9)),
+                      ),
+                  },
+                  onValueChanged: (v) => setState(() => _lockTimeoutIndex = v ?? 1),
                 ),
               ),
             ],
+          ]),
+
+          // ─── Intelligence Controls ────────────────────────────────
+          _SectionHeader(title: 'Intelligence Controls'),
+          _SettingsSection(children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(color: DesignTokens.obsidianTeal.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
+                      child: const Icon(Icons.tune_rounded, color: DesignTokens.textHighContrast, size: 20),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Alert Sensitivity', style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500)),
+                        const SizedBox(height: 2),
+                        Text(
+                          _alertSensitivity < 0.7 ? 'Conservative — only high-certainty signals' : _alertSensitivity > 1.3 ? 'Observant — all detected patterns' : 'Balanced — curated signals',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast),
+                        ),
+                      ],
+                    )),
+                  ]),
+                  const SizedBox(height: 12),
+                  SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      activeTrackColor: DesignTokens.obsidianTeal,
+                      inactiveTrackColor: DesignTokens.borderSubtle,
+                      thumbColor: DesignTokens.obsidianTeal,
+                      overlayColor: DesignTokens.obsidianTeal.withValues(alpha: 0.1),
+                      trackHeight: 3,
+                    ),
+                    child: Slider(
+                      value: _alertSensitivity,
+                      min: 0,
+                      max: 2,
+                      divisions: 2,
+                      onChanged: (v) => setState(() => _alertSensitivity = v),
+                    ),
+                  ),
+                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                    Text('Conservative', style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 10, color: DesignTokens.textMediumContrast)),
+                    Text('Balanced', style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 10, color: DesignTokens.textMediumContrast)),
+                    Text('Observant', style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 10, color: DesignTokens.textMediumContrast)),
+                  ]),
+                  const SizedBox(height: 12),
+                ],
+              ),
+            ),
+            const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
+            _SettingsTile(
+              icon: Icons.lightbulb_outline_rounded,
+              title: 'Insight Frequency',
+              subtitle: 'How often Viren surfaces behavioral observations.',
+              trailing: CupertinoSlidingSegmentedControl<int>(
+                groupValue: _insightFrequencyIndex,
+                backgroundColor: DesignTokens.graphiteBase,
+                thumbColor: DesignTokens.graphiteSurface,
+                children: {
+                  for (int i = 0; i < _insightFrequencyOptions.length; i++)
+                    i: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Text(_insightFrequencyOptions[i], style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 10)),
+                    ),
+                },
+                onValueChanged: (v) => setState(() => _insightFrequencyIndex = v ?? 1),
+              ),
+            ),
+            const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
+            _SettingsTile(
+              icon: Icons.visibility_off_outlined,
+              title: 'Hide Low-Confidence Insights',
+              subtitle: 'Only show insights with >70% confidence score.',
+              trailing: CupertinoSwitch(
+                value: _hideLowConfidence,
+                onChanged: (v) => setState(() => _hideLowConfidence = v),
+                activeTrackColor: DesignTokens.obsidianTeal,
+              ),
+            ),
+          ]),
+
+          // ─── Experience & Motion ──────────────────────────────────
+          _SectionHeader(title: 'Experience & Motion'),
+          _SettingsSection(children: [
+            _SettingsTile(
+              icon: Icons.animation_rounded,
+              title: 'Calm Mode',
+              subtitle: 'Disables all non-essential animations, staggers, and parallax. Navigation remains smooth.',
+              trailing: CupertinoSwitch(
+                value: _isCalmMode,
+                onChanged: (v) {
+                  setState(() {
+                    _isCalmMode = v;
+                    AnimationPresets.calmModeEnabled = v;
+                  });
+                },
+                activeTrackColor: DesignTokens.obsidianTeal,
+              ),
+            ),
+            if (!_isCalmMode) ...[
+              const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(color: DesignTokens.obsidianTeal.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
+                        child: const Icon(Icons.speed_rounded, color: DesignTokens.textHighContrast, size: 20),
+                      ),
+                      const SizedBox(width: 16),
+                      Text('Animation Intensity', style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500)),
+                    ]),
+                    const SizedBox(height: 12),
+                    CupertinoSlidingSegmentedControl<AnimationIntensity>(
+                      groupValue: _intensity,
+                      backgroundColor: DesignTokens.graphiteBase,
+                      thumbColor: DesignTokens.graphiteSurface,
+                      children: {
+                        AnimationIntensity.subtle: Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Text('Subtle', style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 11))),
+                        AnimationIntensity.balanced: Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Text('Balanced', style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 11))),
+                        AnimationIntensity.expressive: Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Text('Expressive', style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 11))),
+                      },
+                      onValueChanged: (v) {
+                        setState(() {
+                          _intensity = v ?? AnimationIntensity.balanced;
+                          AnimationPresets.intensity = _intensity;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ]),
+
+          // ─── Offline / Cloud ──────────────────────────────────────
+          _SectionHeader(title: 'Offline & Cloud'),
+          _SettingsSection(children: [
+            _SettingsTile(
+              icon: Icons.cloud_off_rounded,
+              title: 'Offline Vault',
+              subtitle: 'Viren is offline-first. All data lives on your device. This cannot be disabled.',
+              trailing: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(color: DesignTokens.obsidianTeal.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
+                child: Text('Active', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.obsidianTeal, fontWeight: FontWeight.w600)),
+              ),
+            ),
+            const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
+            _SettingsTile(
+              icon: Icons.cloud_sync_rounded,
+              title: 'Cloud Backup (Optional)',
+              subtitle: 'Cloud mirrors your local vault — it is never authoritative. Sync is always manual and explicit.',
+              trailing: _simulatingBackup
+                ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: DesignTokens.obsidianTeal))
+                : TextButton(
+                    onPressed: _simulateBackup,
+                    style: TextButton.styleFrom(foregroundColor: DesignTokens.obsidianTeal, padding: EdgeInsets.zero),
+                    child: const Text('Backup Now'),
+                  ),
+            ),
+          ]),
+
+          // ─── Data & Control ───────────────────────────────────────
+          _SectionHeader(title: 'Data & Control'),
+          _SettingsSection(children: [
+            _SettingsTile(
+              icon: Icons.storage_rounded,
+              title: 'Storage Used',
+              trailing: null,
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(56, 0, 20, 16),
+              child: Column(
+                children: [
+                  _StorageRow(label: 'Holdings & Trades', bytes: '12 KB', fraction: 0.6),
+                  const SizedBox(height: 8),
+                  _StorageRow(label: 'Journal Entries', bytes: '3 KB', fraction: 0.15),
+                  const SizedBox(height: 8),
+                  _StorageRow(label: 'Settings & Preferences', bytes: '1 KB', fraction: 0.05),
+                ],
+              ),
+            ),
+            const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
+            _SettingsTile(
+              icon: Icons.file_download_outlined,
+              title: 'Export Local Data',
+              subtitle: 'Preview and share your vault as JSON.',
+              onTap: _showExportSheet,
+            ),
+            const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
+            _SettingsTile(
+              icon: Icons.delete_forever_rounded,
+              title: 'Wipe All Local Data',
+              iconColor: DesignTokens.crimsonWarning,
+              titleColor: DesignTokens.crimsonWarning,
+              onTap: _showResetDialog,
+            ),
+          ]),
+
+          // ─── Appearance ───────────────────────────────────────────
+          _SectionHeader(title: 'Appearance'),
+          _SettingsSection(children: [
+            _SettingsTile(
+              icon: Icons.dark_mode_rounded,
+              title: 'Dark Theme',
+              subtitle: 'Viren is exclusively dark-mode. This cannot be changed.',
+              trailing: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(color: DesignTokens.borderSubtle, borderRadius: BorderRadius.circular(12)),
+                child: Text('Always On', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast)),
+              ),
+            ),
+            const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
+            _SettingsTile(
+              icon: Icons.palette_outlined,
+              title: 'Accent Emphasis',
+              subtitle: _useGoldAccent ? 'Gold — milestones and achievements lead.' : 'Teal — actions and focus lead.',
+              trailing: CupertinoSwitch(
+                value: _useGoldAccent,
+                onChanged: (v) => setState(() => _useGoldAccent = v),
+                activeTrackColor: DesignTokens.ashGold,
+              ),
+            ),
+            const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Row(children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: DesignTokens.obsidianTeal.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
+                  child: const Icon(Icons.text_fields_rounded, color: DesignTokens.textHighContrast, size: 20),
+                ),
+                const SizedBox(width: 16),
+                Expanded(child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Font Scale', style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500)),
+                    Text('${(_fontScale * 100).round()}%', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast)),
+                  ],
+                )),
+                SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    activeTrackColor: DesignTokens.obsidianTeal,
+                    inactiveTrackColor: DesignTokens.borderSubtle,
+                    thumbColor: DesignTokens.obsidianTeal,
+                    trackHeight: 3,
+                  ),
+                  child: SizedBox(
+                    width: 120,
+                    child: Slider(value: _fontScale, min: 0.85, max: 1.2, divisions: 7, onChanged: (v) => setState(() => _fontScale = v)),
+                  ),
+                ),
+              ]),
+            ),
+            const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
+            _SettingsTile(
+              icon: Icons.bar_chart_rounded,
+              title: 'Dense Charts',
+              subtitle: 'Compress chart height to show more data at once.',
+              trailing: CupertinoSwitch(
+                value: _densecharts,
+                onChanged: (v) => setState(() => _densecharts = v),
+                activeTrackColor: DesignTokens.obsidianTeal,
+              ),
+            ),
+          ]),
+
+          const SizedBox(height: 48),
+          Center(
+            child: Text(
+              'Viren v1.0.0 — Offline, Private, Yours',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast.withValues(alpha: 0.5), fontSize: 11),
+            ),
           ),
-
-          const SizedBox(height: 32),
-
-          // Account Group
-          _SettingsGroupHeader(title: 'Account & Data'),
-          const SizedBox(height: 16),
-          _SettingsSection(
-            children: [
-              _SettingsTile(
-                icon: Icons.cloud_off_rounded,
-                title: 'Offline Vault Storage',
-                subtitle: 'Your portfolio data strictly remains on device.',
-                trailing: Text('Active', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.obsidianTeal)),
-              ),
-              const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
-              _SettingsTile(
-                 icon: Icons.delete_outline_rounded,
-                 title: 'Wipe Local Data',
-                 iconColor: DesignTokens.crimsonWarning,
-                 titleColor: DesignTokens.crimsonWarning,
-                 onTap: () {
-                    // Mock action
-                 },
-              )
-            ],
-          )
         ],
-      )
-    );
-  }
-}
-
-class _SettingsGroupHeader extends StatelessWidget {
-  final String title;
-
-  const _SettingsGroupHeader({required this.title});
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      title,
-      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-         color: DesignTokens.textMediumContrast,
       ),
     );
   }
 }
 
+// ─── Section Header ──────────────────────────────────────────────────────────
+
+class _SectionHeader extends StatelessWidget {
+  final String title;
+  const _SectionHeader({required this.title});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 32, bottom: 12),
+      child: Text(
+        title.toUpperCase(),
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: DesignTokens.textMediumContrast,
+          letterSpacing: 1.2,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Settings Section ─────────────────────────────────────────────────────────
+
 class _SettingsSection extends StatelessWidget {
   final List<Widget> children;
-
   const _SettingsSection({required this.children});
 
   @override
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-         color: DesignTokens.graphiteSurface,
-         borderRadius: BorderRadius.circular(24),
-         border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+        color: DesignTokens.graphiteSurface,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
       ),
-      child: Column(
-         children: children,
-      ),
+      child: Column(children: children),
     );
   }
 }
+
+// ─── Settings Tile ────────────────────────────────────────────────────────────
 
 class _SettingsTile extends StatelessWidget {
   final IconData icon;
@@ -157,16 +599,17 @@ class _SettingsTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(24), // Approx match to container
+      borderRadius: BorderRadius.circular(24),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                 color: (iconColor ?? DesignTokens.obsidianTeal).withValues(alpha: 0.1),
-                 borderRadius: BorderRadius.circular(10),
+                color: (iconColor ?? DesignTokens.obsidianTeal).withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(icon, color: iconColor ?? DesignTokens.textHighContrast, size: 20),
             ),
@@ -175,37 +618,61 @@ class _SettingsTile extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    title, 
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                       color: titleColor ?? DesignTokens.textHighContrast,
-                       fontWeight: FontWeight.w500,
-                    ),
-                  ),
+                  Text(title, style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: titleColor ?? DesignTokens.textHighContrast,
+                    fontWeight: FontWeight.w500,
+                  )),
                   if (subtitle != null) ...[
-                     const SizedBox(height: 4),
-                     Text(
-                        subtitle!,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                           color: DesignTokens.textMediumContrast,
-                           height: 1.3,
-                        ),
-                     ),
-                  ]
+                    const SizedBox(height: 3),
+                    Text(subtitle!, style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: DesignTokens.textMediumContrast,
+                      height: 1.4,
+                    )),
+                  ],
                 ],
               ),
             ),
-            if (trailing != null) ...[
-               const SizedBox(width: 16),
-               trailing!,
-            ],
+            if (trailing != null) ...[const SizedBox(width: 12), trailing!],
             if (trailing == null && onTap != null) ...[
-                const SizedBox(width: 16),
-                const Icon(Icons.chevron_right_rounded, color: DesignTokens.textMediumContrast),
-            ]
+              const SizedBox(width: 8),
+              const Icon(Icons.chevron_right_rounded, color: DesignTokens.textMediumContrast, size: 20),
+            ],
           ],
         ),
       ),
+    );
+  }
+}
+
+// ─── Storage Row ──────────────────────────────────────────────────────────────
+
+class _StorageRow extends StatelessWidget {
+  final String label;
+  final String bytes;
+  final double fraction;
+
+  const _StorageRow({required this.label, required this.bytes, required this.fraction});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(child: Text(label, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast))),
+        Text(bytes, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast)),
+        const SizedBox(width: 12),
+        SizedBox(
+          width: 80,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: fraction,
+              backgroundColor: DesignTokens.graphiteBase,
+              color: DesignTokens.obsidianTeal,
+              minHeight: 4,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

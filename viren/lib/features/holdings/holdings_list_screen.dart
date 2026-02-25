@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../mock_data/holdings_mock.dart';
 import '../../core/theme/design_tokens.dart';
+import '../../core/animations/animation_presets.dart';
 import '../../core/utils/currency_formatter.dart';
 import 'holding_detail_screen.dart';
 
@@ -51,13 +52,13 @@ class _HoldingsListScreenState extends State<HoldingsListScreen> {
           final holding = HoldingsMock.holdings[index];
           return TweenAnimationBuilder<double>(
             tween: Tween<double>(begin: 0, end: _isLoaded ? 1 : 0),
-            duration: Duration(milliseconds: 400 + (index * 100)), // Staggered entry
-            curve: Curves.easeOutCubic,
+            duration: AnimationPresets.durationNormal + AnimationPresets.staggerItem(index),
+            curve: AnimationPresets.entrance,
             builder: (context, val, child) {
               return Opacity(
                 opacity: val,
                 child: Transform.translate(
-                  offset: Offset(0, 20 * (1 - val)),
+                  offset: Offset(0, 20 * (1 - val) * AnimationPresets.parallaxFactor),
                   child: child,
                 ),
               );
@@ -96,10 +97,10 @@ class _AnimatedHoldingRowState extends State<_AnimatedHoldingRow> {
       },
       child: AnimatedScale(
         scale: _isPressed ? 0.98 : 1.0,
-        duration: const Duration(milliseconds: 100),
-        curve: Curves.easeOutCubic,
+        duration: AnimationPresets.durationFast,
+        curve: AnimationPresets.micro,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
+          duration: AnimationPresets.durationNormal,
           decoration: BoxDecoration(
             color: _isPressed ? DesignTokens.graphiteSurface.withValues(alpha: 0.3) : Colors.transparent,
             borderRadius: BorderRadius.circular(16),

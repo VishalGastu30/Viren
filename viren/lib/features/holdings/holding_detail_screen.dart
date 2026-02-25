@@ -7,6 +7,7 @@ import '../../core/utils/currency_formatter.dart';
 import '../../widgets/charts/candlestick_chart.dart';
 
 import '../../core/animations/animation_presets.dart';
+import 'trade_reason_sheet.dart';
 
 class HoldingDetailScreen extends StatefulWidget {
   final Holding holding;
@@ -109,7 +110,7 @@ class _HoldingDetailScreenState extends State<HoldingDetailScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                       decoration: BoxDecoration(
                         color: isSelected ? DesignTokens.graphiteSurface : Colors.transparent,
-                        borderRadius: BorderRadius.circular(20),
+                        borderRadius: BorderRadius.circular(24),
                         border: Border.all(
                           color: isSelected ? DesignTokens.obsidianTeal.withValues(alpha: 0.5) : Colors.transparent,
                         ),
@@ -166,6 +167,10 @@ class _HoldingDetailScreenState extends State<HoldingDetailScreen> {
                  ],
                ),
                const SizedBox(height: 32),
+               
+               // Investment Reason Section
+               _InvestmentReasonSection(holding: widget.holding),
+               const SizedBox(height: 24),
                
                // Alerts Accordion
                _AlertsAccordion(symbol: widget.holding.symbol),
@@ -335,6 +340,126 @@ class _AlertsAccordionState extends State<_AlertsAccordion> {
             secondCurve: AnimationPresets.entrance,
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _InvestmentReasonSection extends StatelessWidget {
+  final Holding holding;
+
+  static const _tagLabels = {
+    ConvictionTag.longTerm: 'Long-term',
+    ConvictionTag.conviction: 'Conviction',
+    ConvictionTag.experiment: 'Experiment',
+    ConvictionTag.hedge: 'Hedge',
+  };
+
+  static const _emotionLabels = {
+    EmotionTag.calm: 'Calm',
+    EmotionTag.cautious: 'Cautious',
+    EmotionTag.excited: 'Excited',
+    EmotionTag.fearful: 'Fearful',
+    EmotionTag.disciplined: 'Disciplined',
+  };
+
+  const _InvestmentReasonSection({required this.holding});
+
+  void _openReasonSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => TradeReasonSheet(
+        symbol: holding.symbol,
+        existingReason: holding.investmentReason,
+        existingTags: holding.tags,
+        existingEmotion: holding.emotionAtEntry,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasReason = holding.investmentReason != null;
+    return GestureDetector(
+      onTap: () => _openReasonSheet(context),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: DesignTokens.graphiteSurface,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(
+            color: hasReason ? DesignTokens.obsidianTeal.withValues(alpha: 0.15) : DesignTokens.borderSubtle,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Text(
+                'Why I hold this',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const Spacer(),
+              Icon(
+                hasReason ? Icons.edit_outlined : Icons.add_rounded,
+                color: DesignTokens.textMediumContrast,
+                size: 18,
+              ),
+            ]),
+            if (hasReason) ...[
+              const SizedBox(height: 12),
+              Text(
+                holding.investmentReason!,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(height: 1.6, color: DesignTokens.textMediumContrast),
+              ),
+              if (holding.tags.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 6,
+                  children: holding.tags.map((tag) => Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: DesignTokens.obsidianTeal.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(_tagLabels[tag]!, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.obsidianTeal, fontSize: 11)),
+                  )).toList(),
+                ),
+              ],
+              if (holding.emotionAtEntry != null) ...[
+                const SizedBox(height: 8),
+                Row(children: [
+                  const Icon(Icons.mood_rounded, size: 14, color: DesignTokens.ashGold),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Entered feeling ${_emotionLabels[holding.emotionAtEntry!]?.toLowerCase()}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.ashGold, fontSize: 11),
+                  ),
+                ]),
+              ],
+              if (holding.decisionDate != null) ...[
+                const SizedBox(height: 4),
+                Row(children: [
+                  const Icon(Icons.calendar_today_outlined, size: 12, color: DesignTokens.textMediumContrast),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Decision: ${holding.decisionDate!.day}/${holding.decisionDate!.month}/${holding.decisionDate!.year}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast, fontSize: 11),
+                  ),
+                ]),
+              ],
+            ] else ...[
+              const SizedBox(height: 8),
+              Text(
+                'Tap to add your investment thesis for ${holding.symbol}.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast, height: 1.4),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

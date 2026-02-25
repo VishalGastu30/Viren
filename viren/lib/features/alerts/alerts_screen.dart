@@ -100,26 +100,33 @@ class _AnimatedInsightCard extends StatelessWidget {
 }
 
 
-class _InsightCard extends StatelessWidget {
+class _InsightCard extends StatefulWidget {
   final Alert alert;
 
   const _InsightCard({required this.alert});
 
+  @override
+  State<_InsightCard> createState() => _InsightCardState();
+}
+
+class _InsightCardState extends State<_InsightCard> {
+  bool _isExpanded = false;
+
   Color _getSeverityColor() {
-    switch (alert.severity) {
+    switch (widget.alert.severity) {
       case AlertSeverity.info:
         return DesignTokens.textMediumContrast;
       case AlertSeverity.success:
         return DesignTokens.obsidianTeal;
       case AlertSeverity.warning:
-        return DesignTokens.ashGold; // Ash Gold
+        return DesignTokens.ashGold;
       case AlertSeverity.critical:
-        return DesignTokens.crimsonWarning; // Crimson
+        return DesignTokens.crimsonWarning;
     }
   }
 
   IconData _getSeverityIcon() {
-     switch (alert.severity) {
+     switch (widget.alert.severity) {
       case AlertSeverity.info:
         return Icons.info_outline_rounded;
       case AlertSeverity.success:
@@ -131,54 +138,154 @@ class _InsightCard extends StatelessWidget {
     }
   }
 
+  void _dismiss() {
+    setState(() { widget.alert.isDismissed = true; });
+  }
+
+  void _snooze() {
+    setState(() { widget.alert.isSnoozed = true; });
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (widget.alert.isDismissed || widget.alert.isSnoozed) {
+      return const SizedBox.shrink(); 
+    }
+
     final color = _getSeverityColor();
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: DesignTokens.graphiteSurface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: color.withValues(alpha: 0.15),
-          width: 1,
+    return GestureDetector(
+      onTap: () => setState(() => _isExpanded = !_isExpanded),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: DesignTokens.graphiteSurface,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(
+            color: color.withValues(alpha: _isExpanded ? 0.3 : 0.15),
+            width: 1,
+          ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                _getSeverityIcon(),
-                size: 18,
-                color: color,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  _getSeverityIcon(),
+                  size: 18,
+                  color: color,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  widget.alert.time,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: DesignTokens.textMediumContrast,
+                  ),
+                ),
+                const Spacer(),
+                if (widget.alert.relatedSymbol != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: DesignTokens.obsidianTeal.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      widget.alert.relatedSymbol!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.obsidianTeal, fontSize: 10, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              widget.alert.title,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w600,
               ),
-              const SizedBox(width: 8),
-              Text(
-                alert.time,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: DesignTokens.textMediumContrast,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              widget.alert.description,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(children: [
+              Text('Confidence', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast, fontSize: 11)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(3),
+                  child: LinearProgressIndicator(
+                    value: widget.alert.confidence,
+                    backgroundColor: DesignTokens.graphiteBase,
+                    color: color,
+                    minHeight: 3,
+                  ),
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text(
-            alert.title,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.w600,
+              const SizedBox(width: 8),
+              Text('${(widget.alert.confidence * 100).round()}%', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
+            ]),
+            
+            AnimatedCrossFade(
+              firstChild: const SizedBox(height: 0, width: double.infinity),
+              secondChild: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 16),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: DesignTokens.graphiteBase,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Historical Context', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast, letterSpacing: 0.5)),
+                        const SizedBox(height: 6),
+                        Text(widget.alert.historicalContext, style: Theme.of(context).textTheme.bodySmall?.copyWith(height: 1.5)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton.icon(
+                        onPressed: _snooze,
+                        icon: const Icon(Icons.snooze_rounded, size: 16),
+                        label: const Text('Snooze'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: DesignTokens.textMediumContrast,
+                          textStyle: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      TextButton.icon(
+                        onPressed: _dismiss,
+                        icon: const Icon(Icons.close_rounded, size: 16),
+                        label: const Text('Dismiss'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: DesignTokens.textMediumContrast,
+                          textStyle: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              crossFadeState: _isExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+              duration: AnimationPresets.durationNormal,
             ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            alert.description,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              height: 1.4,
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
+

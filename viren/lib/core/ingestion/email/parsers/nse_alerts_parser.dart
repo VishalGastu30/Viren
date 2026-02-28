@@ -20,6 +20,7 @@ class NseAlertsParser extends PdfBrokerParserBase {
     ScannerController scanner,
     AttachmentHandler attachmentHandler,
     AuthService authService,
+    String pan,
   ) async {
     final snapshots = <EmailParsedSnapshot>[];
     final warnings = <String>[];
@@ -39,6 +40,7 @@ class NseAlertsParser extends PdfBrokerParserBase {
           attachmentBytes: bytes,
           filename: attachment.filename,
           attachmentHash: scanner.computeAttachmentHash(bytes),
+          pan: pan,
         );
 
         if (!result.decryptionSucceeded) {

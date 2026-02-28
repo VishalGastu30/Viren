@@ -19,6 +19,7 @@ abstract class PdfBrokerParserBase {
     ScannerController scanner,
     AttachmentHandler attachmentHandler,
     AuthService authService,
+    String pan,
   );
 
   String hashBody(String body) {

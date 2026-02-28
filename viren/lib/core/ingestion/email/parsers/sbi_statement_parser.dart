@@ -24,6 +24,7 @@ class SbiStatementParser extends PdfBrokerParserBase {
     ScannerController scanner,
     AttachmentHandler attachmentHandler,
     AuthService authService,
+    String pan,
   ) async {
     final trades = <EmailParsedTrade>[];
     final snapshots = <EmailParsedSnapshot>[];
@@ -62,6 +63,7 @@ class SbiStatementParser extends PdfBrokerParserBase {
           attachmentBytes: bytes,
           filename: attachment.filename,
           attachmentHash: scanner.computeAttachmentHash(bytes),
+          pan: pan,
         );
 
         if (!result.decryptionSucceeded) {

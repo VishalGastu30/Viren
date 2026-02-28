@@ -6,7 +6,6 @@ import '../../database/repositories/trade_repository.dart';
 import '../../database/daos/import_dao.dart';
 import '../../database/app_database.dart';
 import '../../auth/auth_service.dart';
-import '../../auth/token_vault.dart';
 import 'broker_email_parser.dart';
 import 'scanner_controller.dart';
 import 'attachment_handler.dart';
@@ -93,6 +92,21 @@ class EmailImportResult {
   });
 }
 
+/// Result of Stage 1: Discovery.
+class EmailDiscoveryResult {
+  final List<ScannedEmail> rawEmails;
+  final int totalBrokerEmailsFound;
+  final int totalPdfAttachments;
+
+  const EmailDiscoveryResult({
+    required this.rawEmails,
+    required this.totalBrokerEmailsFound,
+    required this.totalPdfAttachments,
+  });
+
+  bool get isEmpty => totalBrokerEmailsFound == 0;
+}
+
 class EmailImportService {
   final TradeRepository _tradeRepo;
   final ImportDao _importDao;
@@ -104,20 +118,13 @@ class EmailImportService {
   })  : _tradeRepo = tradeRepository,
         _importDao = importDao;
 
-  /// Scans for broker emails using a strict 3-stage pipeline.
-  ///
-  /// Stage 1: DISCOVERY — PAN-independent Gmail query.
-  /// Stage 2: DECRYPTION + PARSING — PAN-dependent PDF processing.
-  /// Stage 3: TALLYING — LedgerEngine validation.
-  Future<EmailImportPreview> scan({
+  /// STAGE 1: DISCOVERY
+  /// Queries Gmail, fetches full messages. PAN-independent.
+  Future<EmailDiscoveryResult> discover({
     required AuthService authService,
-    required TokenVault tokenVault,
     DateTime? since,
     int maxResults = 500,
   }) async {
-    // ──────────────────────────────────────────────────────────────────────
-    // STAGE 1: DISCOVERY (PAN is NOT involved here)
-    // ──────────────────────────────────────────────────────────────────────
     final scanner = ScannerController();
 
     final emails = await scanner.scanForBrokerEmails(
@@ -126,14 +133,26 @@ class EmailImportService {
       maxResults: maxResults,
     );
 
-    // Count PDFs discovered (before any decryption attempt)
     int totalPdfs = 0;
     for (final email in emails) {
       totalPdfs += email.attachments.where((a) => a.isPdf).length;
     }
 
-    // If zero emails, report that clearly — PAN is NOT the problem.
-    if (emails.isEmpty) {
+    return EmailDiscoveryResult(
+      rawEmails: emails,
+      totalBrokerEmailsFound: emails.length,
+      totalPdfAttachments: totalPdfs,
+    );
+  }
+
+  /// STAGE 3, 4, 5: DECRYPT, PARSE, LEDGER
+  /// Processes previously discovered emails using the in-memory PAN.
+  Future<EmailImportPreview> process({
+    required EmailDiscoveryResult discovery,
+    required String pan,
+    required AuthService authService,
+  }) async {
+    if (discovery.isEmpty) {
       return const EmailImportPreview(
         totalBrokerEmailsFound: 0,
         totalPdfAttachments: 0,
@@ -143,10 +162,8 @@ class EmailImportService {
       );
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // STAGE 2: DECRYPTION + PARSING (PAN-dependent)
-    // ──────────────────────────────────────────────────────────────────────
-    final attachmentHandler = AttachmentHandler(tokenVault);
+    final scanner = ScannerController();
+    final attachmentHandler = const AttachmentHandler(); // No Vault dependency
     final parserResults = <EmailParseResult>[];
     int decryptFailures = 0;
     final decryptErrors = <String>[];
@@ -157,13 +174,14 @@ class EmailImportService {
       SbiStatementParser(),
     ];
 
-    for (final email in emails) {
+    for (final email in discovery.rawEmails) {
       final fromEmail = email.from.toLowerCase();
 
       for (final parser in parsers) {
         if (parser.exactSenders.any((s) => fromEmail.contains(s))) {
           final res = await parser.parsePdf(
-              email, scanner, attachmentHandler, authService);
+            email, scanner, attachmentHandler, authService, pan,
+          );
 
           // Track decrypt failures from this result's errors
           for (final err in res.errors) {
@@ -181,9 +199,7 @@ class EmailImportService {
       }
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // STAGE 3: TALLYING (LedgerEngine)
-    // ──────────────────────────────────────────────────────────────────────
+    // STAGE 5: TALLYING (LedgerEngine)
     final ledger = LedgerEngine();
     final ledgerResult = ledger.reconstruct(parserResults);
 
@@ -207,8 +223,8 @@ class EmailImportService {
     }
 
     return EmailImportPreview(
-      totalBrokerEmailsFound: emails.length,
-      totalPdfAttachments: totalPdfs,
+      totalBrokerEmailsFound: discovery.totalBrokerEmailsFound,
+      totalPdfAttachments: discovery.totalPdfAttachments,
       results: parserResults,
       totalTradesFound: totalTrades,
       aggregateConfidence: avgConfidence,

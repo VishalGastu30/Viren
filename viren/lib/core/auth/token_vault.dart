@@ -20,7 +20,7 @@ class TokenVault {
   static const String _keyAccessToken = 'viren_oauth_access_token';
   static const String _keyRefreshToken = 'viren_oauth_refresh_token';
   static const String _keyTokenExpiry = 'viren_oauth_expiry';
-  static const String _keyUserPan = 'viren_user_pan';
+
 
   final FieldEncryptor _encryptor;
 
@@ -80,15 +80,5 @@ class TokenVault {
     await _delete(_keyTokenExpiry);
   }
 
-  // ── PAN (Permanent Account Number) ───────────────────────────────────────
 
-  Future<void> savePan(String pan) async {
-    await _writeEncrypted(_keyUserPan, pan.toUpperCase());
-  }
-
-  Future<String?> getPan() => _readDecrypted(_keyUserPan);
-
-  Future<void> clearPan() async {
-    await _delete(_keyUserPan);
-  }
 }

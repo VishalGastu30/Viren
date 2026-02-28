@@ -3,13 +3,11 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
-import '../../auth/token_vault.dart';
-
 // ─────────────────────────────────────────────────────────────────────────────
 // AttachmentHandler — Downloads, decrypts, and extracts text from PDF attachments.
 //
 // Security invariants:
-//   • PAN is retrieved from encrypted Vault, used in-memory, then discarded.
+//   • PAN is supplied in-memory ONLY.
 //   • Raw PDF bytes are never persisted unencrypted.
 //   • Uses `pdftotext` (poppler-utils) on Linux/Desktop for text extraction.
 //   • On mobile, uses platform channel or bundled native library.
@@ -37,20 +35,19 @@ class AttachmentResult {
 }
 
 class AttachmentHandler {
-  final TokenVault _vault;
-
-  AttachmentHandler(this._vault);
+  const AttachmentHandler();
 
   /// Process a downloaded PDF attachment.
   ///
   /// 1. Saves bytes to a temp file.
-  /// 2. Attempts to extract text (with password from Vault if needed).
+  /// 2. Attempts to extract text using the strictly in-memory PAN.
   /// 3. Cleans up temp files.
   /// 4. Returns extracted text + metadata.
   Future<AttachmentResult> processPdfAttachment({
     required List<int> attachmentBytes,
     required String filename,
     required String attachmentHash,
+    required String pan,
   }) async {
     final tempDir = await getTemporaryDirectory();
     final tempPdfPath = p.join(tempDir.path, 'viren_${DateTime.now().millisecondsSinceEpoch}_$filename');
@@ -61,9 +58,7 @@ class AttachmentHandler {
       await File(tempPdfPath).writeAsBytes(attachmentBytes);
 
       // Rule: PDFs are ALWAYS password-protected with PAN in UPPERCASE
-      final pan = await _vault.getPan();
-      
-      if (pan == null || pan.trim().isEmpty) {
+      if (pan.trim().isEmpty) {
         return AttachmentResult(
           filename: filename,
           attachmentHash: attachmentHash,

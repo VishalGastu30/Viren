@@ -5,7 +5,6 @@ import 'package:intl/intl.dart';
 import 'dart:io';
 
 import '../../core/theme/design_tokens.dart';
-import '../../core/auth/token_vault.dart';
 import '../../core/auth/auth_service.dart';
 import '../../core/ingestion/email/email_import_service.dart';
 import '../../core/ingestion/email/gmail_smoke_test.dart';
@@ -281,66 +280,82 @@ class _ImportCenterScreenState extends ConsumerState<ImportCenterScreen> with Si
 
       // ═══════════════════════════════════════════════════════════════════
       // STEP 0: GMAIL PROOF MODE (smoke test)
-      // Proves Gmail is reachable BEFORE any PAN/parsing/attachment logic.
       // ═══════════════════════════════════════════════════════════════════
       setState(() => _scanStatusMessage = 'Testing Gmail connection...');
-
       final proofResult = await GmailSmokeTest.run(authService);
+      if (!mounted) { _stopScanning(); return; }
+
+      if (!proofResult.gmailReachable || proofResult.messageCount == 0) {
+        _stopScanning();
+        await _showGmailDiagnosticDialog(proofResult);
+        return;
+      }
+
+      // ═══════════════════════════════════════════════════════════════════
+      // STAGE 1: DISCOVERY
+      // ═══════════════════════════════════════════════════════════════════
+      setState(() => _scanStatusMessage = 'Discovering broker statements...');
+      final importService = ref.read(emailImportServiceProvider);
+
+      final discovery = await importService.discover(authService: authService, since: null);
 
       if (!mounted) { _stopScanning(); return; }
 
-      if (!proofResult.gmailReachable) {
+      if (discovery.isEmpty) {
         _stopScanning();
-        await _showGmailDiagnosticDialog(proofResult);
-        return;
-      }
-
-      if (proofResult.messageCount == 0) {
-        _stopScanning();
-        await _showGmailDiagnosticDialog(proofResult);
+        _showErrorSnack('No broker emails found from NSE or SBI.');
         return;
       }
 
       // ═══════════════════════════════════════════════════════════════════
-      // Gmail is PROVEN reachable and has broker emails.
-      // Now run the full 3-stage scan pipeline.
+      // STAGE 2: UX CHECKPOINT (Confirm & Request PAN)
       // ═══════════════════════════════════════════════════════════════════
-      setState(() => _scanStatusMessage = 'Scanning ${proofResult.messageCount} broker emails...');
+      _stopScanning();
+      
+      String pan = '';
+      if (discovery.totalPdfAttachments > 0) {
+        final inputtedPan = await _showPanInputDialog(discovery);
+        if (inputtedPan == null || inputtedPan.isEmpty) {
+          // User cancelled import
+          return;
+        }
+        pan = inputtedPan;
+      }
 
-      final tokenVault = await TokenVault.create();
-      final importService = ref.read(emailImportServiceProvider);
-
-      final preview = await importService.scan(
+      // ═══════════════════════════════════════════════════════════════════
+      // STAGE 3, 4, 5: DECRYPT, PARSE, LEDGER
+      // ═══════════════════════════════════════════════════════════════════
+      _startScanning('Unlocking & Processing ${discovery.totalPdfAttachments} PDFs...');
+      
+      final preview = await importService.process(
+        discovery: discovery, 
+        pan: pan, 
         authService: authService,
-        tokenVault: tokenVault,
-        since: null,
       );
 
       _stopScanning();
       if (!mounted) return;
 
-      // 3-Tier error messaging
-      if (preview.noBrokerEmailsExist) {
-        _showErrorSnack('No broker emails found from NSE or SBI.');
-        return;
-      }
-
       if (preview.allDecryptionsFailed) {
         _showErrorSnack(
           'Found ${preview.totalBrokerEmailsFound} broker emails, but '
-          '${preview.pdfDecryptionFailures} PDF(s) failed to decrypt. Check your PAN.',
+          '${preview.pdfDecryptionFailures} PDF(s) failed to decrypt. '
+          'Please verify your PAN is correct.',
         );
         return;
       }
 
-      if (!preview.hasTrades) {
+      if (!preview.hasTrades && preview.totalSnapshotsFound == 0) {
         _showErrorSnack(
           'Found ${preview.totalBrokerEmailsFound} emails but could not '
-          'extract trades from ${preview.totalPdfAttachments} PDFs.',
+          'extract any data from ${preview.totalPdfAttachments} PDFs.',
         );
         return;
       }
 
+      // ═══════════════════════════════════════════════════════════════════
+      // FINAL STAGE: USER VERIFICATION
+      // ═══════════════════════════════════════════════════════════════════
       final confirmed = await _showEmailPreviewDialog(preview);
       if (confirmed != true) return;
 
@@ -455,6 +470,138 @@ class _ImportCenterScreenState extends ConsumerState<ImportCenterScreen> with Si
       ),
     );
   }
+
+  /// ═══════════════════════════════════════════════════════════════════
+  /// STAGE 2: CONFIRMATION & SECURE PAN INPUT
+  /// Blocks the pipeline until the human provides their PAN.
+  /// ═══════════════════════════════════════════════════════════════════
+  Future<String?> _showPanInputDialog(EmailDiscoveryResult discovery) {
+    final panController = TextEditingController();
+
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        backgroundColor: DesignTokens.graphiteSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  const Icon(Icons.shield_rounded, color: DesignTokens.obsidianTeal),
+                  const SizedBox(width: 12),
+                  Text('Broker Data Found', style: Theme.of(context).textTheme.titleLarge),
+                ]),
+                const SizedBox(height: 20),
+                _PreviewRow(label: 'Broker Emails', value: '${discovery.totalBrokerEmailsFound}'),
+                const SizedBox(height: 8),
+                _PreviewRow(label: 'Secure PDFs', value: '${discovery.totalPdfAttachments}'),
+                const SizedBox(height: 24),
+                Text(
+                  'These PDFs are encrypted by your broker. '
+                  'Enter your PAN (UPPERCASE) to unlock and process them.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: DesignTokens.textMediumContrast,
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: panController,
+                  textCapitalization: TextCapitalization.characters,
+                  maxLength: 10,
+                  obscureText: true, // PAN is treated as a sensitive key
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    fontFamily: 'monospace',
+                    letterSpacing: 2,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: 'ABCDE1234F',
+                    hintStyle: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: DesignTokens.textMediumContrast.withValues(alpha: 0.3),
+                      fontFamily: 'monospace',
+                      letterSpacing: 2,
+                    ),
+                    filled: true,
+                    fillColor: DesignTokens.graphiteBase,
+                    counterText: '',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: const BorderSide(color: DesignTokens.obsidianTeal, width: 1.5),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                    prefixIcon: const Icon(Icons.key_rounded, color: DesignTokens.textMediumContrast),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Row(children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(ctx, null),
+                      child: Text('Cancel Import', style: Theme.of(context).textTheme.bodyMedium),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () {
+                        final pan = panController.text.trim().toUpperCase();
+                        if (pan.length == 10) {
+                          Navigator.pop(ctx, pan);
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: const Text('Enter a valid 10-character PAN'),
+                              backgroundColor: DesignTokens.crimsonWarning,
+                              behavior: SnackBarBehavior.floating,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                          );
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: DesignTokens.obsidianTeal,
+                        foregroundColor: DesignTokens.graphiteBase,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: const Text('Unlock PDFs'),
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 16),
+                Center(
+                  child: Text(
+                    'PAN is never saved or logged.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: DesignTokens.obsidianTeal.withValues(alpha: 0.7),
+                      fontSize: 10,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+
 
 
 

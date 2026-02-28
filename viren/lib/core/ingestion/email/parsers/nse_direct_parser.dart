@@ -21,6 +21,7 @@ class NseDirectParser extends PdfBrokerParserBase {
     ScannerController scanner,
     AttachmentHandler attachmentHandler,
     AuthService authService,
+    String pan,
   ) async {
     final trades = <EmailParsedTrade>[];
     final warnings = <String>[];
@@ -40,6 +41,7 @@ class NseDirectParser extends PdfBrokerParserBase {
           attachmentBytes: bytes,
           filename: attachment.filename,
           attachmentHash: scanner.computeAttachmentHash(bytes),
+          pan: pan,
         );
 
         if (!result.decryptionSucceeded) {

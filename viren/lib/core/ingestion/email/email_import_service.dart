@@ -9,10 +9,14 @@ import '../../auth/auth_service.dart';
 import 'broker_email_parser.dart';
 import 'scanner_controller.dart';
 import 'attachment_handler.dart';
-import 'parsers/pdf_broker_parser.dart';
-import 'parsers/nse_direct_parser.dart';
-import 'parsers/nse_alerts_parser.dart';
-import 'parsers/sbi_statement_parser.dart';
+import 'pdf_classifier.dart';
+import 'document_content_parser.dart';
+import 'parsers/nse_trade_confirmation_parser.dart';
+import 'parsers/sbi_contract_note_parser.dart';
+import 'parsers/sbi_margin_statement_parser.dart';
+import 'parsers/sbi_funds_statement_parser.dart';
+import 'parsers/sbi_securities_statement_parser.dart';
+import 'parsers/nse_alerts_parser_v2.dart';
 import '../tallying/ledger_engine.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -45,6 +49,9 @@ class EmailImportPreview {
   // ── Stage 3: Ledger ──
   final List<String> ledgerDiscrepancies;
   final List<String> ledgerErrors;
+  
+  // ── Stats ──
+  final int totalUnknownDocuments;
 
   const EmailImportPreview({
     required this.totalBrokerEmailsFound,
@@ -54,6 +61,7 @@ class EmailImportPreview {
     required this.aggregateConfidence,
     this.totalSnapshotsFound = 0,
     this.pdfDecryptionFailures = 0,
+    this.totalUnknownDocuments = 0,
     this.decryptionErrors = const [],
     this.ledgerDiscrepancies = const [],
     this.ledgerErrors = const [],
@@ -145,7 +153,7 @@ class EmailImportService {
     );
   }
 
-  /// STAGE 3, 4, 5: DECRYPT, PARSE, LEDGER
+  /// STAGE 3, 4, 5: DECRYPT, CLASSIFY, PARSE, LEDGER
   /// Processes previously discovered emails using the in-memory PAN.
   Future<EmailImportPreview> process({
     required EmailDiscoveryResult discovery,
@@ -168,33 +176,87 @@ class EmailImportService {
     int decryptFailures = 0;
     final decryptErrors = <String>[];
 
-    final parsers = <PdfBrokerParserBase>[
-      NseDirectParser(),
-      NseAlertsParser(),
-      SbiStatementParser(),
-    ];
+    // Registry of our specialized Layer 4 parsers
+    final Map<PdfDocumentType, DocumentContentParser> parsers = {
+      PdfDocumentType.nseTradeConfirmation: NseTradeConfirmationParser(),
+      PdfDocumentType.nseAlertsStatement: NseAlertsParser(),
+      PdfDocumentType.sbiContractNote: SbiContractNoteParser(),
+      PdfDocumentType.sbiMarginStatement: SbiMarginStatementParser(),
+      PdfDocumentType.sbiFundsStatement: SbiFundsStatementParser(),
+      PdfDocumentType.sbiSecuritiesStatement: SbiSecuritiesStatementParser(),
+    };
 
     for (final email in discovery.rawEmails) {
-      final fromEmail = email.from.toLowerCase();
+      for (final attachment in email.attachments) {
+        if (!attachment.isPdf) continue;
 
-      for (final parser in parsers) {
-        if (parser.exactSenders.any((s) => fromEmail.contains(s))) {
-          final res = await parser.parsePdf(
-            email, scanner, attachmentHandler, authService, pan,
+        try {
+          // LAYER 2: Explicit Decryption (Independent of Parsing)
+          final bytes = await scanner.downloadAttachment(
+            authService: authService,
+            messageId: email.messageId,
+            attachmentId: attachment.attachmentId,
           );
 
-          // Track decrypt failures from this result's errors
-          for (final err in res.errors) {
-            if (err.contains('decrypt') ||
-                err.contains('PAN') ||
-                err.contains('password')) {
-              decryptFailures++;
-              decryptErrors.add(err);
-            }
+          final result = await attachmentHandler.processPdfAttachment(
+            attachmentBytes: bytes,
+            filename: attachment.filename,
+            attachmentHash: scanner.computeAttachmentHash(bytes),
+            pan: pan,
+          );
+
+          if (!result.decryptionSucceeded) {
+            decryptFailures++;
+            decryptErrors.add(result.errorMessage ?? 'Failed to decrypt ${attachment.filename}.');
+            continue;
           }
 
-          parserResults.add(res);
-          break;
+          if (result.extractedText.isEmpty) {
+            continue;
+          }
+
+          // LAYER 3: Semantic Document Classification
+          final docType = PdfClassifier.classify(
+            filename: attachment.filename,
+            senderEmail: email.from,
+            rawText: result.extractedText,
+          );
+
+          if (docType == PdfDocumentType.unknown) {
+             parserResults.add(EmailParseResult(
+                messageId: email.messageId,
+                trades: const [],
+                warnings: ['Unknown document format or sender: ${attachment.filename}'],
+                errors: const [],
+                aggregateConfidence: 0,
+             ));
+             continue;
+          }
+
+          // LAYER 4: Specialized Parsing
+          final parser = parsers[docType];
+          if (parser != null) {
+              final parseRes = parser.parseRawText(
+                rawText: result.extractedText,
+                filename: attachment.filename,
+                attachmentHash: result.attachmentHash,
+                emailDate: email.date,
+              );
+              
+              parserResults.add(EmailParseResult(
+                messageId: email.messageId, // Map back to original email ID
+                trades: parseRes.trades,
+                snapshots: parseRes.snapshots,
+                aggregateConfidence: parseRes.aggregateConfidence,
+                warnings: parseRes.warnings,
+                errors: parseRes.errors,
+                rowsDetected: parseRes.rowsDetected,
+                rowsParsed: parseRes.rowsParsed,
+                rejectedRows: parseRes.rejectedRows,
+              ));
+          }
+        } catch (e) {
+          decryptErrors.add('System error processing ${attachment.filename}: $e');
         }
       }
     }
@@ -205,17 +267,20 @@ class EmailImportService {
 
     final totalTrades = ledgerResult.validatedTrades.length;
 
-    // Compute confidence
+    // Compute confidence and stats
     int totalConf = 0;
     int confCount = 0;
+    int totalUnknown = 0;
     for (final res in parserResults) {
       if (res.trades.isNotEmpty || res.snapshots.isNotEmpty) {
         totalConf += res.aggregateConfidence;
         confCount++;
       }
+      if (res.warnings.any((w) => w.contains('Unknown document format'))) {
+        totalUnknown++;
+      }
     }
-    final avgConfidence =
-        confCount == 0 ? 0 : (totalConf / confCount).round();
+    final avgConfidence = confCount == 0 ? 0 : (totalConf / confCount).round();
 
     int totalSnapshots = 0;
     for (final res in parserResults) {
@@ -230,6 +295,7 @@ class EmailImportService {
       aggregateConfidence: avgConfidence,
       totalSnapshotsFound: totalSnapshots,
       pdfDecryptionFailures: decryptFailures,
+      totalUnknownDocuments: totalUnknown,
       decryptionErrors: decryptErrors,
       ledgerDiscrepancies: ledgerResult.discrepancies,
       ledgerErrors: ledgerResult.errors,

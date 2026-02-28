@@ -339,17 +339,20 @@ class _ImportCenterScreenState extends ConsumerState<ImportCenterScreen> with Si
       if (preview.allDecryptionsFailed) {
         _showErrorSnack(
           'Found ${preview.totalBrokerEmailsFound} broker emails, but '
-          '${preview.pdfDecryptionFailures} PDF(s) failed to decrypt. '
+          'all PDFs failed to decrypt. '
           'Please verify your PAN is correct.',
         );
         return;
       }
 
+      // Check if all documents were classified as UNKNOWN
+      if (preview.totalUnknownDocuments > 0 && preview.totalUnknownDocuments == preview.results.length) {
+        _showErrorSnack('Documents found but formats not yet supported.');
+        return;
+      }
+
       if (!preview.hasTrades && preview.totalSnapshotsFound == 0) {
-        _showErrorSnack(
-          'Found ${preview.totalBrokerEmailsFound} emails but could not '
-          'extract any data from ${preview.totalPdfAttachments} PDFs.',
-        );
+        _showErrorSnack('Statements found, but no executed trades detected.');
         return;
       }
 
@@ -364,9 +367,9 @@ class _ImportCenterScreenState extends ConsumerState<ImportCenterScreen> with Si
       _stopScanning();
 
       if (mounted) {
+        final validationDocsCount = preview.results.where((r) => r.snapshots.isNotEmpty).length;
         _showSuccessSnack(
-          'Imported ${result.successfulTrades} trades'
-          '${result.failedTrades > 0 ? ' (${result.failedTrades} failed)' : ''}.'
+          '${result.successfulTrades} trades imported, $validationDocsCount documents used for validation.'
         );
       }
     } catch (e) {

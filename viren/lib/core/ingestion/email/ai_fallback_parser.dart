@@ -1,18 +1,32 @@
 import 'dart:convert';
 import 'package:ollama_dart/ollama_dart.dart';
 
-import 'parsers/sbi_nse_parser.dart';
-
 // ─────────────────────────────────────────────────────────────────────────────
-// AI Fallback Parser — Uses local Ollama LLM for ambiguous PDF text.
+// AI Fallback Parser — Classification ONLY (V2)
 //
-// Only invoked when deterministic parsing confidence < threshold.
+// V2 RULE: AI is NEVER used to extract trades or prices.
+// It is ONLY used to classify unrecognised documents so a human can
+// decide what to do.
+//
 // Constraints:
-//   • Input = sanitized text only (no keys, no raw PDF binary)
-//   • Output = strict JSON schema
+//   • Input  = sanitised text excerpt (first 500 chars max)
+//   • Output = document classification label
 //   • Runs offline via local Ollama instance
 //   • Deterministic seed for reproducibility
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Classification result from the AI fallback.
+class AiClassificationResult {
+  final String documentType;   // e.g. 'contract_note', 'margin_statement', 'holdings_report', 'unknown'
+  final int confidence;        // 0–100
+  final List<String> warnings;
+
+  const AiClassificationResult({
+    required this.documentType,
+    required this.confidence,
+    this.warnings = const [],
+  });
+}
 
 class AiFallbackParser {
   final String _model;
@@ -24,28 +38,27 @@ class AiFallbackParser {
   })  : _model = model,
         _ollamaHost = ollamaHost;
 
-  /// Attempts to extract trades from ambiguous text using local AI.
+  /// Classifies a PDF's text content into a document type.
   ///
-  /// Returns trades with `parsedBy: 'ai'` and reduced confidence.
-  Future<PdfParseResult> parseWithAi(String text, {String broker = 'Unknown'}) async {
+  /// This does NOT extract trades. It only labels the document so the user
+  /// can decide if it warrants manual attention.
+  Future<AiClassificationResult> classify(String text, {String broker = 'Unknown'}) async {
     final client = OllamaClient(baseUrl: _ollamaHost);
 
+    // Truncate to 500 chars to minimise data exposure
+    final truncated = text.length > 500 ? text.substring(0, 500) : text;
+
     final prompt = '''
-You are a financial document parser. Extract ALL trade transactions from the following text.
-Return ONLY a valid JSON array. Each object MUST have these exact fields:
-- "symbol": string (stock ticker, e.g. "RELIANCE", "TCS")
-- "trade_type": string ("BUY" or "SELL")
-- "quantity": number (integer, shares traded)
-- "price": number (price per share)
-- "total_value": number (quantity * price)
-- "trade_date": string (ISO 8601 date, e.g. "2026-02-24")
+You are a financial document classifier. Given the following text excerpt from a PDF,
+determine the document type. Return ONLY a valid JSON object with these exact fields:
+- "document_type": one of "contract_note", "margin_statement", "holdings_report", "trade_confirmation", "account_statement", "unknown"
+- "confidence": integer 0–100
 
-If no trades are found, return an empty array: []
-
-Do NOT include any explanation, markdown, or text outside the JSON array.
+Do NOT extract any financial data, trades, prices, or quantities.
+Do NOT include any explanation outside the JSON object.
 
 TEXT:
-$text
+$truncated
 ''';
 
     try {
@@ -62,70 +75,38 @@ $text
 
       final responseText = response.response ?? '';
 
-      // Extract JSON from response
-      final jsonStr = _extractJson(responseText);
+      final jsonStr = _extractJsonObject(responseText);
       if (jsonStr == null) {
-        return PdfParseResult(
-          trades: [],
+        return const AiClassificationResult(
           documentType: 'unknown',
-          aggregateConfidence: 0,
-          broker: broker,
+          confidence: 0,
           warnings: ['AI returned non-JSON response'],
         );
       }
 
-      final parsed = json.decode(jsonStr) as List<dynamic>;
-      final trades = <PdfParsedTrade>[];
+      final parsed = json.decode(jsonStr) as Map<String, dynamic>;
+      final docType = (parsed['document_type'] as String?) ?? 'unknown';
+      final conf = (parsed['confidence'] as num?)?.toInt() ?? 0;
 
-      for (final item in parsed) {
-        if (item is Map<String, dynamic>) {
-          final symbol = (item['symbol'] as String?) ?? '';
-          final tradeType = (item['trade_type'] as String?) ?? '';
-          final qty = (item['quantity'] as num?)?.toDouble() ?? 0;
-          final price = (item['price'] as num?)?.toDouble() ?? 0;
-          final totalValue = (item['total_value'] as num?)?.toDouble() ?? (qty * price);
-          final dateStr = (item['trade_date'] as String?) ?? '';
-
-          if (symbol.isEmpty || qty <= 0 || price <= 0) continue;
-
-          trades.add(PdfParsedTrade(
-            symbol: symbol.toUpperCase(),
-            tradeType: tradeType.toUpperCase(),
-            quantity: qty,
-            price: price,
-            totalValue: totalValue,
-            charges: 0,
-            tradeTimestamp: DateTime.tryParse(dateStr) ?? DateTime.now(),
-            confidence: 70, // AI gets lower confidence
-            parsedBy: 'ai',
-          ));
-        }
-      }
-
-      return PdfParseResult(
-        trades: trades,
-        documentType: 'ai_extracted',
-        aggregateConfidence: trades.isEmpty ? 0 : 70,
-        broker: broker,
+      return AiClassificationResult(
+        documentType: docType,
+        confidence: conf,
       );
     } catch (e) {
-      return PdfParseResult(
-        trades: [],
+      return AiClassificationResult(
         documentType: 'unknown',
-        aggregateConfidence: 0,
-        broker: broker,
-        warnings: ['AI fallback failed: $e. Manual review required.'],
+        confidence: 0,
+        warnings: ['AI classification failed: $e'],
       );
     }
   }
 
-  /// Extract JSON array from potentially mixed text response.
-  String? _extractJson(String text) {
-    // Try to find a JSON array in the response
-    final bracketStart = text.indexOf('[');
-    final bracketEnd = text.lastIndexOf(']');
-    if (bracketStart >= 0 && bracketEnd > bracketStart) {
-      return text.substring(bracketStart, bracketEnd + 1);
+  /// Extract a JSON object from potentially mixed text response.
+  String? _extractJsonObject(String text) {
+    final braceStart = text.indexOf('{');
+    final braceEnd = text.lastIndexOf('}');
+    if (braceStart >= 0 && braceEnd > braceStart) {
+      return text.substring(braceStart, braceEnd + 1);
     }
     return null;
   }

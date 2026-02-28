@@ -39,16 +39,23 @@ class EmailImportPreview {
   final int totalTradesFound;
   final int totalEmailsScanned;
   final int aggregateConfidence;
+  final int totalSnapshotsFound;
+  final List<String> ledgerDiscrepancies;
+  final List<String> ledgerErrors;
 
   const EmailImportPreview({
     required this.results,
     required this.totalTradesFound,
     required this.totalEmailsScanned,
     required this.aggregateConfidence,
+    this.totalSnapshotsFound = 0,
+    this.ledgerDiscrepancies = const [],
+    this.ledgerErrors = const [],
   });
 
-  bool get requiresConfirmation => aggregateConfidence < 90;
+  bool get requiresConfirmation => aggregateConfidence < 90 || ledgerDiscrepancies.isNotEmpty;
   bool get hasTrades => totalTradesFound > 0;
+  bool get hasDiscrepancies => ledgerDiscrepancies.isNotEmpty;
 }
 
 /// Result of committing email-imported trades.
@@ -151,11 +158,20 @@ class EmailImportService {
     }
     final avgConfidence = confCount == 0 ? 0 : (totalConf / confCount).round();
 
+    // Count total snapshots
+    int totalSnapshots = 0;
+    for (final res in parserResults) {
+      totalSnapshots += res.snapshots.length;
+    }
+
     return EmailImportPreview(
       results: parserResults,
       totalTradesFound: totalTrades,
       totalEmailsScanned: totalEmailsScanned,
       aggregateConfidence: avgConfidence,
+      totalSnapshotsFound: totalSnapshots,
+      ledgerDiscrepancies: ledgerResult.discrepancies,
+      ledgerErrors: ledgerResult.errors,
     );
   }
 

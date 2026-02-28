@@ -1,5 +1,3 @@
-import 'package:logger/logger.dart';
-
 import '../../../database/enums.dart';
 import '../scanner_controller.dart';
 import '../attachment_handler.dart';
@@ -10,7 +8,6 @@ import 'pdf_broker_parser.dart';
 /// Parses "Trades Executed at NSE" from nse-direct@nse.co.in.
 /// This is the ground truth for pure execution trades (BUY/SELL).
 class NseDirectParser extends PdfBrokerParserBase {
-  final _logger = Logger();
 
   @override
   String get brokerName => 'NSE Direct';

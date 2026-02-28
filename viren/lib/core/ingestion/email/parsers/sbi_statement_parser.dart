@@ -1,5 +1,3 @@
-import 'package:logger/logger.dart';
-
 import '../../../database/enums.dart';
 import '../scanner_controller.dart';
 import '../attachment_handler.dart';
@@ -13,7 +11,6 @@ import 'pdf_broker_parser.dart';
 /// - DMRG_*.pdf (Margin) -> daily margin snapshot cross-checking
 /// - Weekly/Monthly/Quarterly -> reconciliation only (ignored for trades)
 class SbiStatementParser extends PdfBrokerParserBase {
-  final _logger = Logger();
 
   @override
   String get brokerName => 'SBI Securities';

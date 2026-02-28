@@ -1,5 +1,3 @@
-import 'package:logger/logger.dart';
-
 import '../scanner_controller.dart';
 import '../attachment_handler.dart';
 import '../../../auth/auth_service.dart';
@@ -9,7 +7,6 @@ import 'pdf_broker_parser.dart';
 /// Parses "Funds / Securities Balance" from nse_alerts@nse.co.in.
 /// This parses holdings snapshots used for cross-checking the Ledger engine.
 class NseAlertsParser extends PdfBrokerParserBase {
-  final _logger = Logger();
 
   @override
   String get brokerName => 'NSE Alerts';

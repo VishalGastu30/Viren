@@ -299,7 +299,7 @@ class _ImportCenterScreenState extends ConsumerState<ImportCenterScreen> with Si
       if (!mounted) return;
 
       if (!preview.hasTrades) {
-        _showErrorSnack('No broker emails found in the last 30 days.');
+        _showErrorSnack('No broker emails with trades found. Check your PAN and try again.');
         return;
       }
 
@@ -542,67 +542,121 @@ class _ImportCenterScreenState extends ConsumerState<ImportCenterScreen> with Si
       builder: (ctx) => Dialog(
         backgroundColor: DesignTokens.graphiteSurface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                const Icon(Icons.mail_outline_rounded, color: DesignTokens.obsidianTeal),
-                const SizedBox(width: 12),
-                Text('Email Scan Results', style: Theme.of(context).textTheme.titleLarge),
-              ]),
-              const SizedBox(height: 16),
-              _PreviewRow(label: 'Emails scanned', value: '${preview.totalEmailsScanned}'),
-              const SizedBox(height: 8),
-              _PreviewRow(label: 'Trades found', value: '${preview.totalTradesFound}'),
-              const SizedBox(height: 8),
-              _PreviewRow(label: 'Confidence', value: '${preview.aggregateConfidence}%'),
-              const SizedBox(height: 16),
-              // Show extracted trades
-              if (preview.results.isNotEmpty) ...[
-                Text('Extracted:', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast)),
-                const SizedBox(height: 8),
-                ...preview.results.expand((r) => r.trades).take(5).map((t) => Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Text(
-                    '${t.tradeType.name.toUpperCase()} ${t.symbol} × ${t.quantity.toStringAsFixed(0)} @ ₹${t.pricePerUnit.toStringAsFixed(2)}',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontFamily: 'monospace',
-                      color: DesignTokens.obsidianTeal,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 500),
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    const Icon(Icons.mail_outline_rounded, color: DesignTokens.obsidianTeal),
+                    const SizedBox(width: 12),
+                    Text('Email Scan Results', style: Theme.of(context).textTheme.titleLarge),
+                  ]),
+                  const SizedBox(height: 16),
+                  // ── Metrics Grid ──
+                  _PreviewRow(label: 'Emails scanned', value: '${preview.totalEmailsScanned}'),
+                  const SizedBox(height: 8),
+                  _PreviewRow(label: 'Trades found', value: '${preview.totalTradesFound}'),
+                  const SizedBox(height: 8),
+                  _PreviewRow(label: 'Snapshots found', value: '${preview.totalSnapshotsFound}'),
+                  const SizedBox(height: 8),
+                  _PreviewRow(label: 'Confidence', value: '${preview.aggregateConfidence}%'),
+                  // ── Discrepancies ──
+                  if (preview.hasDiscrepancies) ...[
+                    const SizedBox(height: 16),
+                    Row(children: [
+                      const Icon(Icons.warning_amber_rounded, color: Colors.amber, size: 18),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Ledger Discrepancies (${preview.ledgerDiscrepancies.length})',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.amber),
+                      ),
+                    ]),
+                    const SizedBox(height: 4),
+                    ...preview.ledgerDiscrepancies.take(3).map((d) => Padding(
+                      padding: const EdgeInsets.only(bottom: 2, left: 26),
+                      child: Text(d, style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: DesignTokens.textMediumContrast, fontSize: 11,
+                      )),
+                    )),
+                    if (preview.ledgerDiscrepancies.length > 3)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 26),
+                        child: Text(
+                          '… and ${preview.ledgerDiscrepancies.length - 3} more',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast),
+                        ),
+                      ),
+                  ],
+                  // ── Ledger Errors ──
+                  if (preview.ledgerErrors.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Row(children: [
+                      Icon(Icons.error_outline_rounded, color: Colors.red.shade400, size: 18),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Ledger Errors (${preview.ledgerErrors.length})',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.red.shade400),
+                      ),
+                    ]),
+                    const SizedBox(height: 4),
+                    ...preview.ledgerErrors.take(3).map((e) => Padding(
+                      padding: const EdgeInsets.only(bottom: 2, left: 26),
+                      child: Text(e, style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: DesignTokens.textMediumContrast, fontSize: 11,
+                      )),
+                    )),
+                  ],
+                  const SizedBox(height: 16),
+                  // ── Trade Preview ──
+                  if (preview.results.isNotEmpty) ...[
+                    Text('Extracted:', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast)),
+                    const SizedBox(height: 8),
+                    ...preview.results.expand((r) => r.trades).take(5).map((t) => Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        '${t.tradeType.name.toUpperCase()} ${t.symbol} × ${t.quantity.toStringAsFixed(0)} @ ₹${t.pricePerUnit.toStringAsFixed(2)}',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontFamily: 'monospace',
+                          color: DesignTokens.obsidianTeal,
+                        ),
+                      ),
+                    )),
+                    if (preview.totalTradesFound > 5)
+                      Text(
+                        '… and ${preview.totalTradesFound - 5} more',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast),
+                      ),
+                  ],
+                  const SizedBox(height: 24),
+                  Row(children: [
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: Text('Cancel', style: Theme.of(context).textTheme.bodyMedium),
+                      ),
                     ),
-                  ),
-                )),
-                if (preview.totalTradesFound > 5)
-                  Text(
-                    '… and ${preview.totalTradesFound - 5} more',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast),
-                  ),
-              ],
-              const SizedBox(height: 24),
-              Row(children: [
-                Expanded(
-                  child: TextButton(
-                    onPressed: () => Navigator.pop(ctx, false),
-                    child: Text('Cancel', style: Theme.of(context).textTheme.bodyMedium),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.pop(ctx, true),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: DesignTokens.obsidianTeal,
-                      foregroundColor: DesignTokens.graphiteBase,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: DesignTokens.obsidianTeal,
+                          foregroundColor: DesignTokens.graphiteBase,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                        child: const Text('Import All'),
+                      ),
                     ),
-                    child: const Text('Import All'),
-                  ),
-                ),
-              ]),
-            ],
+                  ]),
+                ],
+              ),
+            ),
           ),
         ),
       ),

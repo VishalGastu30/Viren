@@ -10,11 +10,12 @@ import 'token_vault.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 // AuthService — Orchestrates platform-aware Google OAuth flow.
 //
-// Detects the platform via OAuthPlatformResolver, executing either the
-// native mobile flow (via google_sign_in v7 singleton) or the Desktop
-// PKCE flow (via googleapis_auth + loopback HttpServer + external browser).
-//
-// Securely stores refresh/access tokens in the TokenVault (AES-256-GCM).
+// CRITICAL RULES:
+// 1. Tokens are BOUND to (clientId, platform, scopes, time).
+//    Change ANY ONE → old tokens must be nuked.
+// 2. disconnect() MUST call GoogleSignIn.disconnect(), not just signOut().
+// 3. After auth, ALWAYS verify scopes include gmail.readonly.
+// 4. Never silently reuse tokens that might be from a dead client.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class AuthService {
@@ -28,9 +29,10 @@ class AuthService {
     return AuthService._(vault, scopes);
   }
 
-  /// Attempts to get valid credentials silently. If none, prompts the user.
+  /// Attempts to get valid credentials. If cached tokens are stale/invalid,
+  /// nukes them and forces a fresh interactive consent flow.
   Future<AccessCredentials> authenticate() async {
-    // 1. Check if we already have valid or refreshable tokens in the Vault
+    // 1. Check if we have cached tokens
     final existingToken = await _vault.getAccessToken();
     final refreshToken = await _vault.getRefreshToken();
     final expiryDate = await _vault.getTokenExpiry();
@@ -42,28 +44,53 @@ class AuthService {
         _scopes,
       );
 
-      // If expired, try to refresh
-      if (creds.accessToken.hasExpired) {
-        if (creds.refreshToken != null) {
-          try {
-            return await _refreshTokens(creds);
-          } catch (_) {
-            // Refresh failed — clear and fall through to interactive auth
-            await _vault.clearTokens();
-          }
+      // If NOT expired, verify the token actually works before returning
+      if (!creds.accessToken.hasExpired) {
+        final valid = await _verifyToken(existingToken);
+        if (valid) return creds;
+        // Token is invalid (wrong client, revoked, etc) — nuke everything
+        await nukeAllTokens();
+      } else if (creds.refreshToken != null) {
+        // Expired — try refresh
+        try {
+          final refreshed = await _refreshTokens(creds);
+          return refreshed;
+        } catch (_) {
+          // Refresh failed — nuke and re-auth
+          await nukeAllTokens();
         }
       } else {
-        return creds;
+        // Expired and no refresh token — nuke
+        await nukeAllTokens();
       }
     }
 
-    // 2. Perform interactive authentication based on platform
+    // 2. Interactive auth (forced fresh consent)
     final config = OAuthPlatformResolver.resolve();
 
     if (config.useExternalBrowserFlow) {
       return await _authenticateDesktop(config);
     } else {
       return await _authenticateMobile(config);
+    }
+  }
+
+  /// Verifies an access token is actually valid by hitting Google's tokeninfo.
+  /// Returns false if the token is invalid, expired, or lacks gmail scopes.
+  Future<bool> _verifyToken(String token) async {
+    try {
+      final response = await http.get(
+        Uri.parse('https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=$token'),
+      );
+      if (response.statusCode != 200) return false;
+
+      // Check that gmail scope is present
+      final body = response.body.toLowerCase();
+      if (!body.contains('gmail')) return false;
+
+      return true;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -103,31 +130,32 @@ class AuthService {
   // ── Mobile (Android/iOS) Flow — google_sign_in v7 singleton API ──────────
 
   Future<AccessCredentials> _authenticateMobile(OAuthConfig config) async {
-    // Initialize the singleton.
-    // On Android: serverClientId is REQUIRED.
-    // On iOS: clientId is used (from GoogleService-Info.plist if empty).
+    // Initialize the singleton with platform-correct client IDs
     await GoogleSignIn.instance.initialize(
       clientId: config.clientId.isNotEmpty ? config.clientId : null,
       serverClientId: config.serverClientId,
     );
 
-    // Try silent/lightweight auth first
+    // CRITICAL: Do NOT use attemptLightweightAuthentication first.
+    // After client ID changes, lightweight auth returns stale tokens.
+    // Always force a full interactive auth to ensure fresh scopes.
     GoogleSignInAccount? account;
     try {
-      account = await GoogleSignIn.instance
-          .attemptLightweightAuthentication();
-    } catch (_) {
-      // Expected to fail on first use
-    }
-
-    // Fall back to interactive auth if lightweight didn't work
-    if (account == null) {
+      account = await GoogleSignIn.instance.authenticate(
+        scopeHint: [gmail.GmailApi.gmailReadonlyScope],
+      );
+    } catch (e) {
+      // If auth fails, it might be stale state — nuke and retry once
+      await _nukeMobileSession();
       try {
         account = await GoogleSignIn.instance.authenticate(
           scopeHint: [gmail.GmailApi.gmailReadonlyScope],
         );
-      } catch (e) {
-        throw Exception('Google Sign-In failed or was cancelled. Error: $e');
+      } catch (e2) {
+        throw Exception(
+          'Google Sign-In failed. Error: $e2\n'
+          'Please ensure your Google account is set up correctly.',
+        );
       }
     }
 
@@ -137,14 +165,24 @@ class AuthService {
       promptIfNecessary: true,
     );
 
-    // Extract access token from headers
+    // Extract access token from headers  
     final authValue = authHeaders?['Authorization'] ?? '';
     final accessToken = authValue.replaceFirst('Bearer ', '');
 
     if (accessToken.isEmpty) {
       throw Exception(
-        'Failed to obtain access token from Google Sign-In. '
-        'Authorization was not granted.',
+        'Failed to obtain access token. '
+        'Gmail read permission was not granted.',
+      );
+    }
+
+    // Verify the token actually has gmail scope
+    final valid = await _verifyToken(accessToken);
+    if (!valid) {
+      await nukeAllTokens();
+      throw Exception(
+        'Token obtained but does not include Gmail permissions. '
+        'Please sign in again and grant Gmail access.',
       );
     }
 
@@ -154,7 +192,7 @@ class AuthService {
 
     await _vault.saveTokens(
       accessToken: accessToken,
-      refreshToken: null, // google_sign_in handles refresh internally
+      refreshToken: null,
       expiry: expiry,
     );
 
@@ -187,18 +225,32 @@ class AuthService {
     }
   }
 
-  // ── Revocation & Disconnect ──────────────────────────────────────────────
+  // ── Token Nuking (THE NUCLEAR OPTION) ────────────────────────────────────
 
-  Future<void> disconnect() async {
+  /// Destroys ALL cached tokens — vault, Google Play Services, everything.
+  /// Call this when tokens are stale, mismatched, or from a dead client ID.
+  Future<void> nukeAllTokens() async {
+    // 1. Clear vault (access + refresh + expiry)
     await _vault.clearTokens();
 
-    final config = OAuthPlatformResolver.resolve();
-    if (!config.useExternalBrowserFlow) {
-      try {
-        await GoogleSignIn.instance.signOut();
-      } catch (_) {
-        // Silent — sign-out failure is non-critical
-      }
-    }
+    // 2. Clear Google Sign-In cache on mobile
+    await _nukeMobileSession();
+  }
+
+  /// Destroys the mobile Google Sign-In session completely.
+  Future<void> _nukeMobileSession() async {
+    try {
+      // signOut() removes cached account only
+      await GoogleSignIn.instance.signOut();
+    } catch (_) {}
+    try {
+      // disconnect() revokes all grants — THIS IS THE CRITICAL ONE
+      await GoogleSignIn.instance.disconnect();
+    } catch (_) {}
+  }
+
+  /// Public disconnect method for UI use.
+  Future<void> disconnect() async {
+    await nukeAllTokens();
   }
 }

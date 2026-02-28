@@ -1,38 +1,54 @@
 import 'package:flutter/material.dart';
 
+import '../../core/ingestion/broker_templates.dart';
 import '../../core/theme/design_tokens.dart';
 
 class ColumnMappingScreen extends StatefulWidget {
-  const ColumnMappingScreen({super.key});
+  final List<String> csvHeaders;
+  final Map<int, CsvField> initialMapping;
+
+  const ColumnMappingScreen({
+    super.key,
+    required this.csvHeaders,
+    required this.initialMapping,
+  });
 
   @override
   State<ColumnMappingScreen> createState() => _ColumnMappingScreenState();
 }
 
 class _ColumnMappingScreenState extends State<ColumnMappingScreen> {
-  // Mock extracted headers
-  final List<String> _csvHeaders = ['Date', 'Stock Symbol', 'Transaction Type', 'Qty', 'Execution Price', 'Brokerage', 'ISIN'];
-  
-  // Target schema fields required by Viren
-  final List<String> _targetFields = ['date', 'symbol', 'action', 'quantity', 'price'];
+  // Target schema fields required by Viren (subset of CsvField)
+  final List<CsvField> _targetFields = [
+    CsvField.tradeDate,
+    CsvField.symbol,
+    CsvField.tradeType,
+    CsvField.quantity,
+    CsvField.pricePerUnit,
+  ];
   
   // Current mapping state (target field -> source header index)
-  final Map<String, int?> _mapping = {};
+  final Map<CsvField, int?> _mapping = {};
 
   @override
   void initState() {
     super.initState();
-    // Auto-map some obvious ones for the mock
-    _mapping['date'] = 0;
-    _mapping['symbol'] = 1;
-    _mapping['action'] = 2;
-    _mapping['quantity'] = 3;
-    _mapping['price'] = 4;
+    // Initialize mapping from what the auto-detection found
+    for (final field in _targetFields) {
+      _mapping[field] = null; // Default to unmapped
+    }
+    
+    // Reverse the initial mapping (index -> field to field -> index)
+    widget.initialMapping.forEach((index, field) {
+      if (_targetFields.contains(field)) {
+        _mapping[field] = index;
+      }
+    });
   }
 
   void _finishMapping() {
     // Validate required fields
-    if (_mapping.values.any((element) => element == null)) {
+    if (_mapping.values.any((index) => index == null)) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Please map all required Viren fields.'),
@@ -43,8 +59,15 @@ class _ColumnMappingScreenState extends State<ColumnMappingScreen> {
       return;
     }
     
-    // Simulate import success
-    Navigator.of(context).pop();
+    // Convert back mapping for the service (index -> field)
+    final Map<int, CsvField> finalMapping = {};
+    _mapping.forEach((field, index) {
+      if (index != null) {
+        finalMapping[index] = field;
+      }
+    });
+
+    Navigator.of(context).pop(finalMapping);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: const Text('Mapped and starting import...'),
@@ -78,7 +101,7 @@ class _ColumnMappingScreenState extends State<ColumnMappingScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('We found 7 columns in your file.', style: Theme.of(context).textTheme.displaySmall),
+            Text('We found ${widget.csvHeaders.length} columns in your file.', style: Theme.of(context).textTheme.displaySmall),
             const SizedBox(height: 8),
             Text('Viren has auto-matched the obvious ones. Please confirm the mapping before we import the records.', style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: DesignTokens.textMediumContrast, height: 1.4)),
             const SizedBox(height: 36),
@@ -95,6 +118,7 @@ class _ColumnMappingScreenState extends State<ColumnMappingScreen> {
 
             // Mapping Rows
             ..._targetFields.map((field) {
+              final fieldName = field.name.replaceAll(RegExp(r'(?<=[a-z])[A-Z]'), r' $&').toUpperCase();
               return Padding(
                 padding: const EdgeInsets.only(bottom: 16.0),
                 child: Row(
@@ -107,7 +131,7 @@ class _ColumnMappingScreenState extends State<ColumnMappingScreen> {
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
                         ),
-                        child: Text(field.toUpperCase(), style: Theme.of(context).textTheme.titleMedium),
+                        child: Text(fieldName, style: Theme.of(context).textTheme.titleMedium),
                       ),
                     ),
                     const SizedBox(width: 16),
@@ -127,7 +151,7 @@ class _ColumnMappingScreenState extends State<ColumnMappingScreen> {
                             icon: const Icon(Icons.arrow_drop_down_rounded, color: DesignTokens.textMediumContrast),
                             value: _mapping[field],
                             hint: Text('Select...', style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: DesignTokens.textMediumContrast)),
-                            items: _csvHeaders.asMap().entries.map((e) {
+                            items: widget.csvHeaders.asMap().entries.map((e) {
                               return DropdownMenuItem<int>(
                                 value: e.key,
                                 child: Text(e.value, maxLines: 1, overflow: TextOverflow.ellipsis),

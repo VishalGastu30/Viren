@@ -3,7 +3,6 @@ import 'dart:math' as math;
 
 import '../../core/theme/design_tokens.dart';
 import '../../core/animations/animation_presets.dart';
-import '../../mock_data/portfolio_mock.dart';
 
 class SimulatorScreen extends StatelessWidget {
   const SimulatorScreen({super.key});
@@ -12,7 +11,7 @@ class SimulatorScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     // Simulated no-action portfolio path (passive index-like return)
     final noActionValues = List.generate(7, (i) => 1250000.0 * (1 + i * 0.022));
-    final actualValues = PortfolioMock.monthlySparks;
+    final actualValues = [1200000.0, 1205000.0, 1230000.0, 1225000.0, 1260000.0, 1250000.0, 1280000.0]; // Fallback until trailing returns from DB
 
     return Scaffold(
       backgroundColor: DesignTokens.graphiteBase,

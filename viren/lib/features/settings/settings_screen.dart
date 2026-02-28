@@ -1,31 +1,26 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../core/theme/design_tokens.dart';
 import '../../core/animations/animation_presets.dart';
+import '../../core/database/providers/database_providers.dart';
+import '../../core/settings/settings_provider.dart';
 import '../settings/style_guide_screen.dart';
 
-class SettingsScreen extends StatefulWidget {
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   // Experience & Motion
-  bool _isCalmMode = AnimationPresets.calmModeEnabled;
   AnimationIntensity _intensity = AnimationPresets.intensity;
 
-  // Security
-  bool _biometricLock = false;
-  int _lockTimeoutIndex = 1; // 0=Immediate, 1=1 min, 2=5 min, 3=15 min
   static const _lockOptions = ['Immediately', '1 minute', '5 minutes', '15 minutes'];
-
-  // Intelligence Controls
-  double _alertSensitivity = 1.0; // 0=Conservative, 1=Balanced, 2=Observant
-  int _insightFrequencyIndex = 1; // 0=Minimal, 1=Normal, 2=Reflective
-  bool _hideLowConfidence = false;
   static const _insightFrequencyOptions = ['Minimal', 'Normal', 'Reflective'];
 
   // Appearance
@@ -36,17 +31,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // Cloud
   bool _simulatingBackup = false;
 
-  void _simulateBackup() {
+  void _runBackup() async {
     setState(() => _simulatingBackup = true);
-    Future.delayed(const Duration(seconds: 2), () {
+    
+    try {
+      final syncService = ref.read(encryptedBackupServiceProvider);
+      await syncService.pushToCloud();
+      
       if (mounted) {
-        setState(() => _simulatingBackup = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Row(children: [
               const Icon(Icons.check_circle_outline_rounded, color: DesignTokens.obsidianTeal, size: 18),
               const SizedBox(width: 12),
-              Text('Backup complete — 6 holdings, 4 trades synced.'),
+              const Text('Vault successfully encrypted and synced to cloud.'),
             ]),
             backgroundColor: DesignTokens.graphiteSurface,
             behavior: SnackBarBehavior.floating,
@@ -55,7 +53,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         );
       }
-    });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Sync failed: $e'),
+            backgroundColor: DesignTokens.crimsonWarning,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _simulatingBackup = false);
+    }
+  }
+
+  void _runRestore() async {
+    setState(() => _simulatingBackup = true);
+    try {
+      final syncService = ref.read(encryptedBackupServiceProvider);
+      final metadata = await syncService.pullFromCloud();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Restored ${metadata.tableCount} tables (${metadata.totalRows} rows) from cloud.'),
+            backgroundColor: DesignTokens.obsidianTeal,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Restore failed: $e'),
+            backgroundColor: DesignTokens.crimsonWarning,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _simulatingBackup = false);
+    }
   }
 
   void _showResetDialog() {
@@ -95,17 +135,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: () {
+                    onPressed: () async {
                       Navigator.pop(ctx);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: const Text('All local data wiped.'),
-                          backgroundColor: DesignTokens.crimsonWarning,
-                          behavior: SnackBarBehavior.floating,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                          margin: const EdgeInsets.all(24),
-                        ),
-                      );
+                      try {
+                        final db = ref.read(appDatabaseProvider);
+                        await db.transaction(() async {
+                          await db.delete(db.trades).go();
+                          await db.delete(db.tradeReasons).go();
+                          await db.delete(db.holdings).go();
+                          await db.delete(db.alerts).go();
+                          await db.delete(db.portfolioSnapshots).go();
+                          await db.delete(db.behaviorMetrics).go();
+                          await db.delete(db.confidenceMeter).go();
+                          await db.delete(db.imports).go();
+                          await db.delete(db.priceHistory).go();
+                          await db.delete(db.integrityMetadata).go();
+                        });
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: const Text('All local data wiped.'),
+                              backgroundColor: DesignTokens.crimsonWarning,
+                              behavior: SnackBarBehavior.floating,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              margin: const EdgeInsets.all(24),
+                            ),
+                          );
+                        }
+                      } catch (e) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Wipe failed: $e'),
+                              backgroundColor: DesignTokens.crimsonWarning,
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                        }
+                      }
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: DesignTokens.crimsonWarning,
@@ -126,6 +193,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _showExportSheet() {
+    final holdingsAsync = ref.read(holdingsStreamProvider);
+    final tradesAsync = ref.read(allTradesProvider);
+    final alertsAsync = ref.read(activeAlertsProvider);
+
+    final holdingsCount = holdingsAsync.value?.length ?? 0;
+    final tradesCount = tradesAsync.value?.length ?? 0;
+    final alertsCount = alertsAsync.value?.length ?? 0;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -156,7 +231,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 border: Border.all(color: DesignTokens.borderSubtle),
               ),
               child: Text(
-                '{\n  "holdings": 6,\n  "trades": 4,\n  "journal": 4,\n  "exported_at": "2024-02-25T21:00:00Z",\n  "version": "1.0.0"\n}',
+                '{\n  "holdings": $holdingsCount,\n  "trades": $tradesCount,\n  "alerts": $alertsCount,\n  "exported_at": "${DateTime.now().toUtc().toIso8601String()}",\n  "version": "1.0.0"\n}',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   fontFamily: 'monospace',
                   color: DesignTokens.obsidianTeal,
@@ -188,6 +263,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final settings = ref.watch(settingsProvider);
+    final settingsNotifier = ref.read(settingsProvider.notifier);
+
     return Scaffold(
       backgroundColor: DesignTokens.graphiteBase,
       appBar: AppBar(
@@ -216,19 +294,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: 'Biometric Lock',
               subtitle: 'Require fingerprint or Face ID on app open and after background timeout. No data leaves device.',
               trailing: CupertinoSwitch(
-                value: _biometricLock,
-                onChanged: (v) => setState(() => _biometricLock = v),
+                value: settings.biometricLock,
+                onChanged: (v) => settingsNotifier.setBiometricLock(v),
                 activeTrackColor: DesignTokens.obsidianTeal,
               ),
             ),
-            if (_biometricLock) ...[
+            if (settings.biometricLock) ...[
               const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
               _SettingsTile(
                 icon: Icons.timer_outlined,
                 title: 'Lock After',
                 subtitle: 'Lock the app after this much time in the background.',
                 trailing: CupertinoSlidingSegmentedControl<int>(
-                  groupValue: _lockTimeoutIndex,
+                  groupValue: settings.lockTimeoutIndex,
                   backgroundColor: DesignTokens.graphiteBase,
                   thumbColor: DesignTokens.graphiteSurface,
                   children: {
@@ -238,7 +316,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         child: Text(_lockOptions[i], style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 9)),
                       ),
                   },
-                  onValueChanged: (v) => setState(() => _lockTimeoutIndex = v ?? 1),
+                  onValueChanged: (v) => settingsNotifier.setLockTimeoutIndex(v ?? 1),
                 ),
               ),
             ],
@@ -265,7 +343,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         Text('Alert Sensitivity', style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500)),
                         const SizedBox(height: 2),
                         Text(
-                          _alertSensitivity < 0.7 ? 'Conservative — only high-certainty signals' : _alertSensitivity > 1.3 ? 'Observant — all detected patterns' : 'Balanced — curated signals',
+                          settings.alertSensitivity < 0.7 ? 'Conservative — only high-certainty signals' : settings.alertSensitivity > 1.3 ? 'Observant — all detected patterns' : 'Balanced — curated signals',
                           style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast),
                         ),
                       ],
@@ -281,11 +359,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       trackHeight: 3,
                     ),
                     child: Slider(
-                      value: _alertSensitivity,
+                      value: settings.alertSensitivity,
                       min: 0,
                       max: 2,
                       divisions: 2,
-                      onChanged: (v) => setState(() => _alertSensitivity = v),
+                      onChanged: (v) => settingsNotifier.setAlertSensitivity(v),
                     ),
                   ),
                   Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
@@ -303,7 +381,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: 'Insight Frequency',
               subtitle: 'How often Viren surfaces behavioral observations.',
               trailing: CupertinoSlidingSegmentedControl<int>(
-                groupValue: _insightFrequencyIndex,
+                groupValue: settings.insightFrequencyIndex,
                 backgroundColor: DesignTokens.graphiteBase,
                 thumbColor: DesignTokens.graphiteSurface,
                 children: {
@@ -313,7 +391,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       child: Text(_insightFrequencyOptions[i], style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 10)),
                     ),
                 },
-                onValueChanged: (v) => setState(() => _insightFrequencyIndex = v ?? 1),
+                onValueChanged: (v) => settingsNotifier.setInsightFrequencyIndex(v ?? 1),
               ),
             ),
             const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
@@ -322,8 +400,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: 'Hide Low-Confidence Insights',
               subtitle: 'Only show insights with >70% confidence score.',
               trailing: CupertinoSwitch(
-                value: _hideLowConfidence,
-                onChanged: (v) => setState(() => _hideLowConfidence = v),
+                value: settings.hideLowConfidence,
+                onChanged: (v) => settingsNotifier.setHideLowConfidence(v),
                 activeTrackColor: DesignTokens.obsidianTeal,
               ),
             ),
@@ -337,17 +415,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: 'Calm Mode',
               subtitle: 'Disables all non-essential animations, staggers, and parallax. Navigation remains smooth.',
               trailing: CupertinoSwitch(
-                value: _isCalmMode,
+                value: settings.isCalmMode,
                 onChanged: (v) {
-                  setState(() {
-                    _isCalmMode = v;
-                    AnimationPresets.calmModeEnabled = v;
-                  });
+                  settingsNotifier.setCalmMode(v);
+                  AnimationPresets.calmModeEnabled = v;
                 },
                 activeTrackColor: DesignTokens.obsidianTeal,
               ),
             ),
-            if (!_isCalmMode) ...[
+            if (!settings.isCalmMode) ...[
               const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
@@ -386,7 +462,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ]),
 
-          // ─── Offline / Cloud ──────────────────────────────────────
           _SectionHeader(title: 'Offline & Cloud'),
           _SettingsSection(children: [
             _SettingsTile(
@@ -401,15 +476,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
             _SettingsTile(
-              icon: Icons.cloud_sync_rounded,
-              title: 'Cloud Backup (Optional)',
-              subtitle: 'Cloud mirrors your local vault — it is never authoritative. Sync is always manual and explicit.',
+              icon: Icons.cloud_upload_rounded,
+              title: 'Push Backup to Cloud',
+              subtitle: 'Encrypts your vault with your local key and uploads it to Supabase.',
               trailing: _simulatingBackup
                 ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: DesignTokens.obsidianTeal))
                 : TextButton(
-                    onPressed: _simulateBackup,
+                    onPressed: _runBackup,
                     style: TextButton.styleFrom(foregroundColor: DesignTokens.obsidianTeal, padding: EdgeInsets.zero),
-                    child: const Text('Backup Now'),
+                    child: const Text('Push'),
+                  ),
+            ),
+            const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
+            _SettingsTile(
+              icon: Icons.cloud_download_rounded,
+              title: 'Pull Backup from Cloud',
+              subtitle: 'Downloads and decrypts the latest synced vault.',
+              trailing: _simulatingBackup
+                ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: DesignTokens.obsidianTeal))
+                : TextButton(
+                    onPressed: _runRestore,
+                    style: TextButton.styleFrom(foregroundColor: DesignTokens.ashGold, padding: EdgeInsets.zero),
+                    child: const Text('Pull'),
                   ),
             ),
           ]),
@@ -424,14 +512,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(56, 0, 20, 16),
-              child: Column(
-                children: [
-                  _StorageRow(label: 'Holdings & Trades', bytes: '12 KB', fraction: 0.6),
-                  const SizedBox(height: 8),
-                  _StorageRow(label: 'Journal Entries', bytes: '3 KB', fraction: 0.15),
-                  const SizedBox(height: 8),
-                  _StorageRow(label: 'Settings & Preferences', bytes: '1 KB', fraction: 0.05),
-                ],
+              child: Builder(
+                builder: (context) {
+                  final holdingsCount = ref.watch(holdingsStreamProvider).value?.length ?? 0;
+                  final tradesCount = ref.watch(allTradesProvider).value?.length ?? 0;
+                  final alertsCount = ref.watch(activeAlertsProvider).value?.length ?? 0;
+                  final importsCount = ref.watch(importsStreamProvider).value?.length ?? 0;
+                  final total = holdingsCount + tradesCount + alertsCount + importsCount;
+                  final tradeFraction = total > 0 ? (holdingsCount + tradesCount) / total : 0.0;
+                  final alertFraction = total > 0 ? alertsCount / total : 0.0;
+                  final importFraction = total > 0 ? importsCount / total : 0.0;
+
+                  return Column(
+                    children: [
+                      _StorageRow(label: 'Holdings & Trades', bytes: '${holdingsCount + tradesCount} records', fraction: tradeFraction),
+                      const SizedBox(height: 8),
+                      _StorageRow(label: 'Alerts', bytes: '$alertsCount records', fraction: alertFraction),
+                      const SizedBox(height: 8),
+                      _StorageRow(label: 'Imports', bytes: '$importsCount records', fraction: importFraction),
+                    ],
+                  );
+                },
               ),
             ),
             const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),

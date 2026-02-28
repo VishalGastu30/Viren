@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
-
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/database/providers/database_providers.dart';
+import '../../core/database/enums.dart' as db_enums;
 import '../../core/theme/design_tokens.dart';
-import '../../mock_data/alerts_mock.dart';
+import '../../core/intelligence/ai/data_sanitizer.dart';
 import '../../core/animations/animation_presets.dart';
 
 class ChatMessage {
@@ -12,52 +14,84 @@ class ChatMessage {
   ChatMessage({required this.text, required this.isUser, this.isTyping = false});
 }
 
-class AssistantScreen extends StatefulWidget {
+class AssistantScreen extends ConsumerStatefulWidget {
   const AssistantScreen({super.key});
 
   @override
-  State<AssistantScreen> createState() => _AssistantScreenState();
+  ConsumerState<AssistantScreen> createState() => _AssistantScreenState();
 }
 
-class _AssistantScreenState extends State<AssistantScreen> {
-  final List<ChatMessage> _messages = [
-    ChatMessage(
-      text: 'Hello, Viren. I observed 3 trades in January and a slight drift in your conviction tagging. I can summarise the month, review your behavior, or answer questions about your holdings.',
-      isUser: false,
-    ),
-  ];
+class _AssistantScreenState extends ConsumerState<AssistantScreen> {
+  final List<ChatMessage> _messages = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _messages.add(
+      ChatMessage(
+        text: 'Viren is initializing...',
+        isUser: false,
+      ),
+    );
+  }
 
   bool _isTyping = false;
 
-  void _handleSuggestionTap(String question) async {
+  void _handleSuggestionTap(String label, String actionType) async {
     if (_isTyping) return;
 
-    final answer = AlertsMock.assistantQA[question];
-    if (answer == null) return;
-
     setState(() {
-      _messages.insert(0, ChatMessage(text: question, isUser: true));
+      _messages.insert(0, ChatMessage(text: label, isUser: true));
       _isTyping = true;
     });
-
-    // Simulated network/processing delay
-    await Future.delayed(const Duration(milliseconds: 600));
 
     if (!mounted) return;
     setState(() {
       _messages.insert(0, ChatMessage(text: '...', isUser: false, isTyping: true));
     });
 
-    // Simulated typing delay proportional to message length
-    final typingDuration = Duration(milliseconds: 400 + (answer.length * 15));
-    await Future.delayed(typingDuration);
+    try {
+      final aiProvider = ref.read(aiProviderProvider);
+      final String answer;
 
-    if (!mounted) return;
-    setState(() {
-      _messages.removeAt(0); // Remove typing indicator
-      _messages.insert(0, ChatMessage(text: answer, isUser: false));
-      _isTyping = false;
-    });
+      if (actionType == 'summarize') {
+        final holdings = await ref.read(holdingsStreamProvider.future);
+        final score = await ref.read(confidenceScoreProvider.future);
+
+        final sanitizedData = DataSanitizer.sanitizePortfolio(
+          holdings: holdings,
+          confidenceScore: score?.strategyAdherence ?? 0.0,
+          timeRange: 'All Time',
+        );
+        final response = await aiProvider.summarize(sanitizedData);
+        answer = response.content;
+      } else if (actionType == 'reflect') {
+        final tradesList = await ref.read(allTradesProvider.future);
+        final trades = tradesList.map((t) => t.trade).toList();
+        final metrics = await ref.read(behaviorDaoProvider).watchAllMetrics().first;
+        final score = await ref.read(confidenceScoreProvider.future);
+        
+        final sanitizedData = DataSanitizer.sanitizeBehavior(metrics, score, trades);
+        final response = await aiProvider.reflect(sanitizedData);
+        answer = response.content;
+      } else {
+        answer = "I'm sorry, I don't know how to do that.";
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _messages.removeAt(0); // Remove typing indicator
+        _messages.insert(0, ChatMessage(text: answer, isUser: false));
+        _isTyping = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _messages.removeAt(0);
+        _messages.insert(0, ChatMessage(text: 'I am currently unable to process that. Please ensure you have data available and Ollama is running. Error: $e', isUser: false));
+        _isTyping = false;
+      });
+    }
   }
 
   @override
@@ -111,27 +145,52 @@ class _AssistantScreenState extends State<AssistantScreen> {
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
-                      children: AlertsMock.assistantQA.keys.map((q) => _ActionChip(
-                        label: q,
-                        onTap: () => _handleSuggestionTap(q),
-                        isDisabled: _isTyping,
-                      )).toList(),
+                      children: [
+                        _ActionChip(
+                          label: 'Summarize portfolio',
+                          onTap: () => _handleSuggestionTap('Summarize portfolio', 'summarize'),
+                          isDisabled: _isTyping,
+                        ),
+                        _ActionChip(
+                          label: 'Reflect on behavior',
+                          onTap: () => _handleSuggestionTap('Reflect on behavior', 'reflect'),
+                          isDisabled: _isTyping,
+                        ),
+                      ],
                     ),
                     
                     const SizedBox(height: 32),
                     
                     // Chat Messages 
-                    ..._messages.reversed.toList().asMap().entries.map((entry) {
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 16.0),
-                        child: _ChatBubble(
-                          message: entry.value.text,
-                          isUser: entry.value.isUser,
-                          isTyping: entry.value.isTyping,
-                          index: _messages.length - 1 - entry.key, 
-                        ),
-                      );
-                    }),
+                    ref.watch(allTradesProvider).when(
+                      data: (trades) {
+                        final count = trades.length;
+                        final greeting = count == 0 
+                            ? 'Hello. I am Viren. I observe your trade behavior and conviction. You haven\'t recorded any trades yet. Shall we start?'
+                            : 'Hello. I have analyzed your $count recorded trade${count > 1 ? 's' : ''}. I can summarize your activity or discuss your recent conviction levels.';
+                        
+                        // Update initial message if it's the first time
+                        if (_messages.isNotEmpty && _messages.last.text == 'Viren is initializing...') {
+                          _messages.last = ChatMessage(text: greeting, isUser: false);
+                        }
+
+                        return Column(
+                          children: _messages.reversed.toList().asMap().entries.map((entry) {
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 16.0),
+                              child: _ChatBubble(
+                                message: entry.value.text,
+                                isUser: entry.value.isUser,
+                                isTyping: entry.value.isTyping,
+                                index: _messages.length - 1 - entry.key, 
+                              ),
+                            );
+                          }).toList(),
+                        );
+                      },
+                      loading: () => const Center(child: CircularProgressIndicator()),
+                      error: (_, __) => const Text('Error linking assistant to Vault.'),
+                    ),
                   ]
                 ),
               ),
@@ -153,104 +212,126 @@ class _AssistantScreenState extends State<AssistantScreen> {
               ),
             ),
           ),
-          SliverList(
-            delegate: SliverChildBuilderDelegate(
-               (context, index) {
-                 final entry = AlertsMock.journal[index];
-                 // Stagger logic
-                 return TweenAnimationBuilder<double>(
-                   tween: Tween<double>(begin: 0, end: 1),
-                   duration: AnimationPresets.durationNormal + AnimationPresets.staggerItem(index),
-                   curve: AnimationPresets.entrance,
-                   builder: (context, value, child) {
-                     return Opacity(
-                       opacity: value.clamp(0.0, 1.0),
-                       child: Transform.translate(
-                         offset: Offset(0, 20 * (1 - value) * AnimationPresets.parallaxFactor),
-                         child: child,
+          ref.watch(allTradesProvider).when(
+            data: (trades) {
+              if (trades.isEmpty) {
+                return const SliverToBoxAdapter(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
+                    child: Text('No journal entries yet. Your trade history will appear here.'),
+                  ),
+                );
+              }
+              return SliverList(
+                delegate: SliverChildBuilderDelegate(
+                   (context, index) {
+                     final trade = trades[index];
+                     final dateStr = '${trade.trade.tradeTimestamp.day}/${trade.trade.tradeTimestamp.month}/${trade.trade.tradeTimestamp.year}';
+                     
+                     return TweenAnimationBuilder<double>(
+                       tween: Tween<double>(begin: 0, end: 1),
+                       duration: AnimationPresets.durationNormal + AnimationPresets.staggerItem(index),
+                       curve: AnimationPresets.entrance,
+                       builder: (context, value, child) {
+                         return Opacity(
+                           opacity: value.clamp(0.0, 1.0),
+                           child: Transform.translate(
+                             offset: Offset(0, 20 * (1 - value) * AnimationPresets.parallaxFactor),
+                             child: child,
+                           ),
+                         );
+                       },
+                       child: Padding(
+                         padding: const EdgeInsets.only(left: 24.0, right: 24.0, bottom: 24.0),
+                         child: IntrinsicHeight(
+                           child: Row(
+                             crossAxisAlignment: CrossAxisAlignment.stretch,
+                             children: [
+                               Column(
+                                 children: [
+                                   Container(
+                                     width: 12,
+                                     height: 12,
+                                     decoration: BoxDecoration(
+                                       color: index == 0 ? DesignTokens.obsidianTeal : DesignTokens.graphiteSurface,
+                                       shape: BoxShape.circle,
+                                       border: Border.all(
+                                         color: index == 0 ? DesignTokens.obsidianTeal : DesignTokens.ashGold, 
+                                         width: 2
+                                       ),
+                                     ),
+                                   ),
+                                   if (index != trades.length -1) // rudimentary timeline line
+                                      Expanded(
+                                        child: Container(
+                                           width: 2,
+                                           color: DesignTokens.graphiteSurface,
+                                        ),
+                                      ),
+                                 ],
+                               ),
+                               const SizedBox(width: 16),
+                               Expanded(
+                                 child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Text(
+                                            dateStr,
+                                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                              color: index == 0 ? DesignTokens.obsidianTeal : DesignTokens.ashGold,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                          Container(
+                                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                             decoration: BoxDecoration(
+                                               color: index == 0 ? DesignTokens.obsidianTeal.withValues(alpha: 0.1) : DesignTokens.graphiteSurface,
+                                               borderRadius: BorderRadius.circular(12),
+                                             ),
+                                             child: Text(
+                                               trade.trade.tradeType == db_enums.TradeType.buy ? 'INVESTMENT' : 'EXIT',
+                                               style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                                  fontSize: 10,
+                                                  color: index == 0 ? DesignTokens.obsidianTeal : DesignTokens.textMediumContrast,
+                                               ),
+                                             ),
+                                          )
+                                        ],
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'You ${trade.trade.tradeType == db_enums.TradeType.buy ? 'bought' : 'sold'} ${trade.trade.quantity} shares of ${trade.trade.instrumentSymbol} at ₹${trade.trade.pricePerUnit.toStringAsFixed(2)}',
+                                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                          height: 1.5,
+                                          color: index == 0 ? DesignTokens.textHighContrast : DesignTokens.textMediumContrast,
+                                        ),
+                                      ),
+                                      if (trade.reasonText != null && trade.reasonText!.isNotEmpty) ...[
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          'Reason: ${trade.reasonText}',
+                                          style: Theme.of(context).textTheme.bodySmall?.copyWith(fontStyle: FontStyle.italic),
+                                        ),
+                                      ],
+                                      const SizedBox(height: 12),
+                                    ],
+                                 ),
+                               ),
+                             ],
+                           ),
+                         ),
                        ),
                      );
                    },
-                   child: Padding(
-                     padding: const EdgeInsets.only(left: 24.0, right: 24.0, bottom: 24.0),
-                     child: IntrinsicHeight(
-                       child: Row(
-                         crossAxisAlignment: CrossAxisAlignment.stretch,
-                         children: [
-                           Column(
-                             children: [
-                               Container(
-                                 width: 12,
-                                 height: 12,
-                                 decoration: BoxDecoration(
-                                   color: index == 0 ? DesignTokens.obsidianTeal : DesignTokens.graphiteSurface,
-                                   shape: BoxShape.circle,
-                                   border: Border.all(
-                                     color: index == 0 ? DesignTokens.obsidianTeal : DesignTokens.ashGold, 
-                                     width: 2
-                                   ),
-                                 ),
-                               ),
-                               if (index != AlertsMock.journal.length -1) // rudimentary timeline line
-                                  Expanded(
-                                    child: Container(
-                                       width: 2,
-                                       color: DesignTokens.graphiteSurface,
-                                    ),
-                                  ),
-                             ],
-                           ),
-                           const SizedBox(width: 16),
-                           Expanded(
-                             child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Text(
-                                        entry.date,
-                                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                          color: index == 0 ? DesignTokens.obsidianTeal : DesignTokens.ashGold,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                      Container(
-                                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                         decoration: BoxDecoration(
-                                           color: index == 0 ? DesignTokens.obsidianTeal.withValues(alpha: 0.1) : DesignTokens.graphiteSurface,
-                                           borderRadius: BorderRadius.circular(12),
-                                         ),
-                                         child: Text(
-                                           entry.tag,
-                                           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                              fontSize: 10,
-                                              color: index == 0 ? DesignTokens.obsidianTeal : DesignTokens.textMediumContrast,
-                                           ),
-                                         ),
-                                      )
-                                    ],
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    entry.note,
-                                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                      height: 1.5,
-                                      color: index == 0 ? DesignTokens.textHighContrast : DesignTokens.textMediumContrast,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                ],
-                             ),
-                           ),
-                         ],
-                       ),
-                     ),
-                   ),
-                 );
-               },
-              childCount: AlertsMock.journal.length,
-            ),
+                  childCount: trades.length,
+                ),
+              );
+            },
+            loading: () => const SliverToBoxAdapter(child: Center(child: CircularProgressIndicator())),
+            error: (_, __) => const SliverToBoxAdapter(child: Text('Error loading journal')),
           ),
           const SliverToBoxAdapter(
             child: SizedBox(height: 80),

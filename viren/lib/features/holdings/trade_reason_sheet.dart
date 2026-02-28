@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/animations/animation_presets.dart';
-import '../../mock_data/holdings_mock.dart';
+import '../../core/database/enums.dart' as db_enums;
 
 class TradeReasonSheet extends StatefulWidget {
   final String symbol;
   final String? existingReason;
-  final List<ConvictionTag> existingTags;
-  final EmotionTag? existingEmotion;
+  final List<String> existingTags;
+  final db_enums.EmotionalState? existingEmotion;
 
   const TradeReasonSheet({
     super.key,
@@ -23,22 +23,22 @@ class TradeReasonSheet extends StatefulWidget {
 
 class _TradeReasonSheetState extends State<TradeReasonSheet> {
   late TextEditingController _reasonController;
-  late List<ConvictionTag> _selectedTags;
-  EmotionTag? _selectedEmotion;
+  late List<String> _selectedTags;
+  db_enums.EmotionalState? _selectedEmotion;
 
   static const _tagLabels = {
-    ConvictionTag.longTerm: 'Long-term',
-    ConvictionTag.conviction: 'Conviction',
-    ConvictionTag.experiment: 'Experiment',
-    ConvictionTag.hedge: 'Hedge',
+    'Long-term': 'Long-term',
+    'Conviction': 'Conviction',
+    'Experiment': 'Experiment',
+    'Hedge': 'Hedge',
   };
 
   static const _emotionLabels = {
-    EmotionTag.calm: 'Calm',
-    EmotionTag.cautious: 'Cautious',
-    EmotionTag.excited: 'Excited',
-    EmotionTag.fearful: 'Fearful',
-    EmotionTag.disciplined: 'Disciplined',
+    db_enums.EmotionalState.calm: 'Calm',
+    db_enums.EmotionalState.cautious: 'Cautious',
+    db_enums.EmotionalState.excited: 'Excited',
+    db_enums.EmotionalState.fearful: 'Fearful',
+    db_enums.EmotionalState.disciplined: 'Disciplined',
   };
 
   @override
@@ -122,7 +122,7 @@ class _TradeReasonSheetState extends State<TradeReasonSheet> {
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: ConvictionTag.values.map((tag) {
+            children: _tagLabels.keys.map((tag) {
               final isSelected = _selectedTags.contains(tag);
               return GestureDetector(
                 onTap: () => setState(() {
@@ -155,7 +155,7 @@ class _TradeReasonSheetState extends State<TradeReasonSheet> {
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: EmotionTag.values.map((emotion) {
+            children: db_enums.EmotionalState.values.map((emotion) {
               final isSelected = _selectedEmotion == emotion;
               return GestureDetector(
                 onTap: () => setState(() {

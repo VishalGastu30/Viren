@@ -3,7 +3,23 @@ import 'dart:math' as math;
 
 import '../core/theme/design_tokens.dart';
 import '../core/animations/animation_presets.dart';
-import '../mock_data/behavioral_mock.dart';
+class ConfidenceMetric {
+  final double strategicConsistency;
+  final double timeDiscipline;
+  final double emotionalStability;
+  final String strategicNote;
+  final String timeNote;
+  final String emotionalNote;
+
+  const ConfidenceMetric({
+    required this.strategicConsistency,
+    required this.timeDiscipline,
+    required this.emotionalStability,
+    required this.strategicNote,
+    required this.timeNote,
+    required this.emotionalNote,
+  });
+}
 
 /// Three slow-moving arc meters representing the investor confidence profile.
 class ConfidenceMeterWidget extends StatelessWidget {

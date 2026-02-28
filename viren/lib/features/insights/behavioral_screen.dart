@@ -1,14 +1,42 @@
 import 'package:flutter/material.dart';
-
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/database/providers/database_providers.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/animations/animation_presets.dart';
-import '../../mock_data/behavioral_mock.dart';
+import '../../widgets/confidence_meter_widget.dart';
 
-class BehavioralScreen extends StatelessWidget {
+enum BehaviorPatternType {
+  overtrading,
+  panicBuying,
+  longInactivity,
+  convictionDrift,
+  excessiveProfit,
+}
+
+class BehavioralPattern {
+  final BehaviorPatternType type;
+  final String title;
+  final String dateRange;
+  final double confidence;
+  final String description;
+  final String why;
+  final List<String> relatedSymbols;
+
+  const BehavioralPattern({
+    required this.type,
+    required this.title,
+    required this.dateRange,
+    required this.confidence,
+    required this.description,
+    required this.why,
+    this.relatedSymbols = const [],
+  });
+}
+class BehavioralScreen extends ConsumerWidget {
   const BehavioralScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       backgroundColor: DesignTokens.graphiteBase,
       appBar: AppBar(
@@ -39,7 +67,33 @@ class BehavioralScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 32),
-                  _ConfidenceMeterStrip(metric: BehavioralMock.metric),
+                  ref.watch(confidenceScoreProvider).when(
+                    data: (scoreData) {
+                      if (scoreData == null) {
+                        return const _ConfidenceMeterStrip(metric: ConfidenceMetric(
+                          strategicConsistency: 0.5,
+                          strategicNote: 'Awaiting data',
+                          timeDiscipline: 0.5,
+                          timeNote: 'Awaiting data',
+                          emotionalStability: 0.5,
+                          emotionalNote: 'Awaiting data',
+                        ));
+                      }
+                      // Map DB model to widget model
+                      return _ConfidenceMeterStrip(
+                        metric: ConfidenceMetric(
+                          strategicConsistency: scoreData.strategyAdherence / 100,
+                          strategicNote: 'Strategy adherence score from Vault.',
+                          timeDiscipline: scoreData.consistency / 100,
+                          timeNote: 'Execution consistency measure.',
+                          emotionalStability: scoreData.emotionalStability / 100,
+                          emotionalNote: 'Self-reported stability.',
+                        ),
+                      );
+                    },
+                    loading: () => const Center(child: CircularProgressIndicator()),
+                    error: (_, __) => const Text('Error loading insights'),
+                  ),
                   const SizedBox(height: 32),
                   Text('Detected Patterns', style: Theme.of(context).textTheme.titleLarge),
                   const SizedBox(height: 16),
@@ -47,26 +101,45 @@ class BehavioralScreen extends StatelessWidget {
               ),
             ),
           ),
-          SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                final pattern = BehavioralMock.patterns[index];
-                return TweenAnimationBuilder<double>(
-                  tween: Tween(begin: 0, end: 1),
-                  duration: AnimationPresets.durationSlow + AnimationPresets.staggerItem(index),
-                  curve: AnimationPresets.entrance,
-                  builder: (context, v, child) => Opacity(
-                    opacity: v.clamp(0.0, 1.0),
-                    child: Transform.translate(offset: Offset(0, 20 * (1 - v)), child: child),
-                  ),
+          ref.watch(activeAlertsProvider).when(
+            data: (alerts) {
+              // Convert actual alerts from rule engine to Behavioral patterns
+              final List<BehavioralPattern> patterns = [];
+              // For now, return empty or mapped patterns when we have the actual db structure mapped
+              
+              if (patterns.isEmpty) {
+                return const SliverToBoxAdapter(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-                    child: _BehaviorPatternCard(pattern: pattern),
-                  ),
+                    padding: EdgeInsets.symmetric(horizontal: 24.0, vertical: 32.0),
+                    child: Text('No behavioural patterns detected yet.'),
+                  )
                 );
-              },
-              childCount: BehavioralMock.patterns.length,
-            ),
+              }
+
+              return SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    final pattern = patterns[index];
+                    return TweenAnimationBuilder<double>(
+                      tween: Tween(begin: 0, end: 1),
+                      duration: AnimationPresets.durationSlow + AnimationPresets.staggerItem(index),
+                      curve: AnimationPresets.entrance,
+                      builder: (context, v, child) => Opacity(
+                        opacity: v.clamp(0.0, 1.0),
+                        child: Transform.translate(offset: Offset(0, 20 * (1 - v)), child: child),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+                        child: _BehaviorPatternCard(pattern: pattern),
+                      ),
+                    );
+                  },
+                  childCount: patterns.length,
+                ),
+              );
+            },
+            loading: () => const SliverToBoxAdapter(child: Center(child: CircularProgressIndicator())),
+            error: (_, __) => const SliverToBoxAdapter(child: Text('Failed to load patterns')),
           ),
           const SliverToBoxAdapter(child: SizedBox(height: 80)),
         ],

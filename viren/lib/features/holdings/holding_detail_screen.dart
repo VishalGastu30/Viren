@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
-
-import '../../mock_data/holdings_mock.dart';
-import '../../mock_data/alerts_mock.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/database/app_database.dart';
+import '../../core/database/providers/database_providers.dart';
+import '../../core/database/enums.dart' as db_enums;
 import '../../core/theme/design_tokens.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../widgets/charts/candlestick_chart.dart';
@@ -9,16 +10,16 @@ import '../../widgets/charts/candlestick_chart.dart';
 import '../../core/animations/animation_presets.dart';
 import 'trade_reason_sheet.dart';
 
-class HoldingDetailScreen extends StatefulWidget {
-  final Holding holding;
+class HoldingDetailScreen extends ConsumerStatefulWidget {
+  final Holding holding; // Using Drift model
 
   const HoldingDetailScreen({super.key, required this.holding});
 
   @override
-  State<HoldingDetailScreen> createState() => _HoldingDetailScreenState();
+  ConsumerState<HoldingDetailScreen> createState() => _HoldingDetailScreenState();
 }
 
-class _HoldingDetailScreenState extends State<HoldingDetailScreen> {
+class _HoldingDetailScreenState extends ConsumerState<HoldingDetailScreen> {
   String _selectedTimeframe = '1M';
   final List<String> _timeframes = ['1M', '3M', '6M', '1Y'];
 
@@ -27,7 +28,7 @@ class _HoldingDetailScreenState extends State<HoldingDetailScreen> {
     return Scaffold(
       backgroundColor: DesignTokens.graphiteBase,
       appBar: AppBar(
-        title: Text(widget.holding.symbol),
+        title: Text(widget.holding.instrumentSymbol),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
           onPressed: () => Navigator.of(context).pop(),
@@ -41,7 +42,7 @@ class _HoldingDetailScreenState extends State<HoldingDetailScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                widget.holding.name,
+                'Holding Details', // Or fetch company name if available
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
               const SizedBox(height: 8),
@@ -49,18 +50,16 @@ class _HoldingDetailScreenState extends State<HoldingDetailScreen> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    CurrencyFormatter.format(widget.holding.currentPrice, showDecimals: true),
+                    CurrencyFormatter.format(widget.holding.averagePrice, showDecimals: true),
                     style: Theme.of(context).textTheme.displayMedium,
                   ),
                   const SizedBox(width: 12),
                   Padding(
                     padding: const EdgeInsets.only(bottom: 6.0),
                     child: Text(
-                      CurrencyFormatter.formatPercentage((widget.holding.currentPrice - widget.holding.avgPrice)/widget.holding.avgPrice * 100),
+                      '-- %',
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        color: widget.holding.currentPrice >= widget.holding.avgPrice 
-                          ? DesignTokens.obsidianTeal 
-                          : DesignTokens.crimsonWarning,
+                        color: DesignTokens.obsidianTeal,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -78,17 +77,51 @@ class _HoldingDetailScreenState extends State<HoldingDetailScreen> {
                   duration: AnimationPresets.durationChartDraw == Duration.zero ? const Duration(milliseconds: 1) : AnimationPresets.durationChartDraw,
                   curve: AnimationPresets.entrance,
                    builder: (context, value, child) {
-                     return CandlestickChart(
-                        data: widget.holding.history.map((price) {
-                           // Mocking High/Low/Open/Close from single price points for demo
-                           return CandlestickData(
-                             open: price * 0.99,
-                             high: price * 1.02,
-                             low: price * 0.98,
-                             close: price,
-                             date: DateTime.now(), // Date not rendered on axis yet
+                     // Build candlestick data from real trades for this symbol
+                     final tradesAsync = ref.watch(allTradesProvider);
+                     return tradesAsync.when(
+                       data: (trades) {
+                         final symbolTrades = trades
+                             .where((t) => t.trade.instrumentSymbol == widget.holding.instrumentSymbol)
+                             .toList()
+                           ..sort((a, b) => a.trade.tradeTimestamp.compareTo(b.trade.tradeTimestamp));
+
+                         if (symbolTrades.isEmpty) {
+                           // Fallback: single candle from average price
+                           final avg = widget.holding.averagePrice;
+                           return CandlestickChart(
+                             data: [
+                               CandlestickData(
+                                 open: avg * 0.99,
+                                 high: avg * 1.02,
+                                 low: avg * 0.98,
+                                 close: avg,
+                                 date: DateTime.now(),
+                               ),
+                             ],
                            );
-                        }).toList(),
+                         }
+
+                         // Derive candlestick data from trade prices
+                         return CandlestickChart(
+                           data: symbolTrades.map((tw) {
+                             final price = tw.trade.pricePerUnit;
+                             return CandlestickData(
+                               open: price * 0.99,
+                               high: price * 1.02,
+                               low: price * 0.98,
+                               close: price,
+                               date: tw.trade.tradeTimestamp,
+                             );
+                           }).toList(),
+                         );
+                       },
+                       loading: () => const Center(
+                         child: CircularProgressIndicator(strokeWidth: 2, color: DesignTokens.obsidianTeal),
+                       ),
+                       error: (_, __) => const Center(
+                         child: Text('Unable to load chart data'),
+                       ),
                      );
                    }
                 )
@@ -135,14 +168,14 @@ class _HoldingDetailScreenState extends State<HoldingDetailScreen> {
                    Expanded(
                      child: _StatCard(
                        label: 'Invested', 
-                       value: CurrencyFormatter.formatCompact(widget.holding.avgPrice * widget.holding.quantity),
+                       value: CurrencyFormatter.formatCompact(widget.holding.investedValue),
                      ),
                    ),
                    const SizedBox(width: 16),
                    Expanded(
                      child: _StatCard(
                         label: 'Current', 
-                        value: CurrencyFormatter.formatCompact(widget.holding.totalValue),
+                        value: CurrencyFormatter.formatCompact(widget.holding.investedValue),
                         isHighlight: true,
                      ),
                    ),
@@ -154,14 +187,14 @@ class _HoldingDetailScreenState extends State<HoldingDetailScreen> {
                    Expanded(
                      child: _StatCard(
                        label: 'Avg Price', 
-                       value: CurrencyFormatter.format(widget.holding.avgPrice),
+                       value: CurrencyFormatter.format(widget.holding.averagePrice),
                      ),
                    ),
                    const SizedBox(width: 16),
                    Expanded(
                      child: _StatCard(
                         label: 'Quantity', 
-                        value: widget.holding.quantity.toString(),
+                        value: widget.holding.totalQuantity.toString(),
                      ),
                    ),
                  ],
@@ -173,7 +206,7 @@ class _HoldingDetailScreenState extends State<HoldingDetailScreen> {
                const SizedBox(height: 24),
                
                // Alerts Accordion
-               _AlertsAccordion(symbol: widget.holding.symbol),
+               _AlertsAccordion(symbol: widget.holding.instrumentSymbol),
                const SizedBox(height: 48),
             ],
           ),
@@ -219,24 +252,27 @@ class _StatCard extends StatelessWidget {
   }
 }
 
-class _AlertsAccordion extends StatefulWidget {
+class _AlertsAccordion extends ConsumerStatefulWidget {
   final String symbol;
 
   const _AlertsAccordion({required this.symbol});
 
   @override
-  State<_AlertsAccordion> createState() => _AlertsAccordionState();
+  ConsumerState<_AlertsAccordion> createState() => _AlertsAccordionState();
 }
 
-class _AlertsAccordionState extends State<_AlertsAccordion> {
+class _AlertsAccordionState extends ConsumerState<_AlertsAccordion> {
   bool _isExpanded = false;
 
   @override
   Widget build(BuildContext context) {
-    // Filter alerts to mock finding relevant ones for this holding
-    final relevantAlerts = AlertsMock.insights.where((a) => a.title.contains(widget.symbol) || a.description.contains(widget.symbol)).toList();
+    final alertsAsync = ref.watch(activeAlertsProvider);
+    
+    return alertsAsync.when(
+      data: (allAlerts) {
+        final relevantAlerts = allAlerts.where((a) => a.title.contains(widget.symbol) || a.description.contains(widget.symbol)).toList();
 
-    if (relevantAlerts.isEmpty) return const SizedBox.shrink();
+        if (relevantAlerts.isEmpty) return const SizedBox.shrink();
 
     return Container(
       decoration: BoxDecoration(
@@ -288,16 +324,16 @@ class _AlertsAccordionState extends State<_AlertsAccordion> {
                 children: relevantAlerts.map((alert) {
                    Color alertColor;
                    switch (alert.severity) {
-                     case AlertSeverity.critical:
+                     case db_enums.AlertSeverity.critical:
                        alertColor = DesignTokens.crimsonWarning;
                        break;
-                     case AlertSeverity.warning:
+                     case db_enums.AlertSeverity.warning:
                        alertColor = DesignTokens.ashGold;
                        break;
-                     case AlertSeverity.success:
+                     case db_enums.AlertSeverity.success:
                        alertColor = DesignTokens.obsidianTeal;
                        break;
-                     case AlertSeverity.info:
+                     case db_enums.AlertSeverity.info:
                        alertColor = DesignTokens.textMediumContrast;
                        break;
                    }
@@ -324,7 +360,7 @@ class _AlertsAccordionState extends State<_AlertsAccordion> {
                                 const SizedBox(height: 4),
                                 Text(alert.description, style: Theme.of(context).textTheme.bodySmall?.copyWith(height: 1.4)),
                                 const SizedBox(height: 4),
-                                Text(alert.time, style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 10, color: DesignTokens.textMediumContrast)),
+                                Text('${alert.createdAt.day}/${alert.createdAt.month}', style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 10, color: DesignTokens.textMediumContrast)),
                               ],
                             ),
                           )
@@ -342,26 +378,15 @@ class _AlertsAccordionState extends State<_AlertsAccordion> {
         ],
       ),
     );
+      },
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+    );
   }
 }
 
 class _InvestmentReasonSection extends StatelessWidget {
   final Holding holding;
-
-  static const _tagLabels = {
-    ConvictionTag.longTerm: 'Long-term',
-    ConvictionTag.conviction: 'Conviction',
-    ConvictionTag.experiment: 'Experiment',
-    ConvictionTag.hedge: 'Hedge',
-  };
-
-  static const _emotionLabels = {
-    EmotionTag.calm: 'Calm',
-    EmotionTag.cautious: 'Cautious',
-    EmotionTag.excited: 'Excited',
-    EmotionTag.fearful: 'Fearful',
-    EmotionTag.disciplined: 'Disciplined',
-  };
 
   const _InvestmentReasonSection({required this.holding});
 
@@ -371,27 +396,26 @@ class _InvestmentReasonSection extends StatelessWidget {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => TradeReasonSheet(
-        symbol: holding.symbol,
-        existingReason: holding.investmentReason,
-        existingTags: holding.tags,
-        existingEmotion: holding.emotionAtEntry,
+        symbol: holding.instrumentSymbol,
+        existingReason: null, // To be wired to tradeRepository later
+        existingTags: [],
+        existingEmotion: null,
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final hasReason = holding.investmentReason != null;
+    // Current cache doesn't hold reason, will wire to TradeRepository later
     return GestureDetector(
       onTap: () => _openReasonSheet(context),
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
           color: DesignTokens.graphiteSurface,
           borderRadius: BorderRadius.circular(24),
           border: Border.all(
-            color: hasReason ? DesignTokens.obsidianTeal.withValues(alpha: 0.15) : DesignTokens.borderSubtle,
+            color: DesignTokens.borderSubtle,
           ),
         ),
         child: Column(
@@ -403,61 +427,17 @@ class _InvestmentReasonSection extends StatelessWidget {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const Spacer(),
-              Icon(
-                hasReason ? Icons.edit_outlined : Icons.add_rounded,
+              const Icon(
+                Icons.add_rounded,
                 color: DesignTokens.textMediumContrast,
                 size: 18,
               ),
             ]),
-            if (hasReason) ...[
-              const SizedBox(height: 12),
-              Text(
-                holding.investmentReason!,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(height: 1.6, color: DesignTokens.textMediumContrast),
-              ),
-              if (holding.tags.isNotEmpty) ...[
-                const SizedBox(height: 14),
-                Wrap(
-                  spacing: 6,
-                  children: holding.tags.map((tag) => Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: DesignTokens.obsidianTeal.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(_tagLabels[tag]!, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.obsidianTeal, fontSize: 11)),
-                  )).toList(),
-                ),
-              ],
-              if (holding.emotionAtEntry != null) ...[
-                const SizedBox(height: 8),
-                Row(children: [
-                  const Icon(Icons.mood_rounded, size: 14, color: DesignTokens.ashGold),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Entered feeling ${_emotionLabels[holding.emotionAtEntry!]?.toLowerCase()}',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.ashGold, fontSize: 11),
-                  ),
-                ]),
-              ],
-              if (holding.decisionDate != null) ...[
-                const SizedBox(height: 4),
-                Row(children: [
-                  const Icon(Icons.calendar_today_outlined, size: 12, color: DesignTokens.textMediumContrast),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Decision: ${holding.decisionDate!.day}/${holding.decisionDate!.month}/${holding.decisionDate!.year}',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast, fontSize: 11),
-                  ),
-                ]),
-              ],
-            ] else ...[
-              const SizedBox(height: 8),
-              Text(
-                'Tap to add your investment thesis for ${holding.symbol}.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast, height: 1.4),
-              ),
-            ],
+            const SizedBox(height: 8),
+            Text(
+              'Tap to record your investment thesis for ${holding.instrumentSymbol}.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast, height: 1.4),
+            ),
           ],
         ),
       ),

@@ -1,11 +1,13 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
-import '../../mock_data/holdings_mock.dart';
+import '../../core/database/app_database.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/animations/animation_presets.dart';
 
 class AllocationDonutChart extends StatefulWidget {
-  const AllocationDonutChart({super.key});
+  final List<Holding> holdings;
+
+  const AllocationDonutChart({super.key, required this.holdings});
 
   @override
   State<AllocationDonutChart> createState() => _AllocationDonutChartState();
@@ -43,7 +45,7 @@ class _AllocationDonutChartState extends State<AllocationDonutChart> with Single
         return CustomPaint(
           size: const Size.square(200),
           painter: _DonutPainter(
-            holdings: HoldingsMock.holdings,
+            holdings: widget.holdings,
             progress: _animation.value,
           ),
         );
@@ -84,8 +86,10 @@ class _DonutPainter extends CustomPainter {
       DesignTokens.textMediumContrast,
     ];
 
+    final totalInvested = holdings.fold(0.0, (acc, h) => acc + h.investedValue);
+
     for (int i = 0; i < holdings.length; i++) {
-      final sweepAngle = (holdings[i].percentOfPortfolio / 100) * 2 * pi * progress;
+      final sweepAngle = totalInvested > 0 ? (holdings[i].investedValue / totalInvested) * 2 * pi * progress : 0;
       
       final paint = Paint()
         ..color = colors[i % colors.length]

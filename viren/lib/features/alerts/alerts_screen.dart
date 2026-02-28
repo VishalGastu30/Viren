@@ -1,32 +1,23 @@
 import 'package:flutter/material.dart';
-
-import '../../mock_data/alerts_mock.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/database/providers/database_providers.dart';
+import '../../core/database/app_database.dart';
+import '../../core/database/enums.dart' as db_enums;
 import '../../core/theme/design_tokens.dart';
 import '../../core/animations/animation_presets.dart';
 
-class AlertsScreen extends StatefulWidget {
+class AlertsScreen extends ConsumerStatefulWidget {
   const AlertsScreen({super.key});
 
   @override
-  State<AlertsScreen> createState() => _AlertsScreenState();
+  ConsumerState<AlertsScreen> createState() => _AlertsScreenState();
 }
 
-class _AlertsScreenState extends State<AlertsScreen> {
-  late List<Alert> _sortedAlerts;
-
+class _AlertsScreenState extends ConsumerState<AlertsScreen> {
   @override
   void initState() {
     super.initState();
-    // Sort logic: Critical -> Warning -> Success -> Info
-    _sortedAlerts = List.from(AlertsMock.insights)..sort((a, b) {
-      const order = {
-        AlertSeverity.critical: 0,
-        AlertSeverity.warning: 1,
-        AlertSeverity.success: 2,
-        AlertSeverity.info: 3,
-      };
-      return order[a.severity]!.compareTo(order[b.severity]!);
-    });
+    // Animation trigger delay
   }
 
   @override
@@ -39,25 +30,58 @@ class _AlertsScreenState extends State<AlertsScreen> {
           style: Theme.of(context).textTheme.displaySmall,
         ),
       ),
-      body: ListView.separated(
-        physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.only(top: 16, bottom: 100, left: 24, right: 24),
-        itemCount: _sortedAlerts.length,
-        separatorBuilder: (context, index) => const SizedBox(height: 16),
-        itemBuilder: (context, index) {
-          final alert = _sortedAlerts[index];
-          return _AnimatedInsightCard(
-            alert: alert,
-            index: index,
+      body: ref.watch(activeAlertsProvider).when(
+        data: (alerts) {
+          if (alerts.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                   const Icon(Icons.notifications_none_rounded, size: 64, color: DesignTokens.textMediumContrast),
+                   const SizedBox(height: 16),
+                   Text('Peace and quiet.', style: Theme.of(context).textTheme.titleMedium),
+                   const SizedBox(height: 8),
+                   Text('No active investment alerts at the moment.', style: Theme.of(context).textTheme.bodySmall),
+                ],
+              ),
+            );
+          }
+
+          final sorted = List<Alert>.from(alerts)..sort((a, b) {
+            const order = {
+              db_enums.AlertSeverity.critical: 0,
+              db_enums.AlertSeverity.warning: 1,
+              db_enums.AlertSeverity.success: 2,
+              db_enums.AlertSeverity.info: 3,
+            };
+            final aPrio = order[a.severity] ?? 3;
+            final bPrio = order[b.severity] ?? 3;
+            return aPrio.compareTo(bPrio);
+          });
+
+          return ListView.separated(
+            physics: const BouncingScrollPhysics(),
+            padding: const EdgeInsets.only(top: 16, bottom: 100, left: 24, right: 24),
+            itemCount: sorted.length,
+            separatorBuilder: (context, index) => const SizedBox(height: 16),
+            itemBuilder: (context, index) {
+              final alert = sorted[index];
+              return _AnimatedInsightCard(
+                alert: alert,
+                index: index,
+              );
+            },
           );
         },
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (err, _) => Center(child: Text('Error loading alerts: $err')),
       ),
     );
   }
 }
 
 class _AnimatedInsightCard extends StatelessWidget {
-  final Alert alert;
+  final Alert alert; // Alert from Drift
   final int index;
 
   const _AnimatedInsightCard({required this.alert, required this.index});
@@ -67,10 +91,10 @@ class _AnimatedInsightCard extends StatelessWidget {
     // Determine curve based on severity
     Curve animationCurve;
     switch (alert.severity) {
-      case AlertSeverity.critical:
+      case db_enums.AlertSeverity.critical:
         animationCurve = Curves.elasticOut; // Pulse/bounce for critical
         break;
-      case AlertSeverity.warning:
+      case db_enums.AlertSeverity.warning:
         animationCurve = Curves.easeOutBack;
         break;
       default:
@@ -88,7 +112,7 @@ class _AnimatedInsightCard extends StatelessWidget {
           child: Transform.translate(
             offset: Offset(0, 30 * (1 - value)),
             child: Transform.scale(
-              scale: alert.severity == AlertSeverity.critical ? 0.95 + (0.05 * value) : 1.0,
+              scale: alert.severity == db_enums.AlertSeverity.critical ? 0.95 + (0.05 * value) : 1.0,
               child: child,
             ),
           ),
@@ -100,57 +124,58 @@ class _AnimatedInsightCard extends StatelessWidget {
 }
 
 
-class _InsightCard extends StatefulWidget {
-  final Alert alert;
+class _InsightCard extends ConsumerStatefulWidget {
+  final Alert alert; // Alert from Drift
 
   const _InsightCard({required this.alert});
 
   @override
-  State<_InsightCard> createState() => _InsightCardState();
+  ConsumerState<_InsightCard> createState() => _InsightCardState();
 }
 
-class _InsightCardState extends State<_InsightCard> {
+class _InsightCardState extends ConsumerState<_InsightCard> {
   bool _isExpanded = false;
 
   Color _getSeverityColor() {
     switch (widget.alert.severity) {
-      case AlertSeverity.info:
+      case db_enums.AlertSeverity.info:
         return DesignTokens.textMediumContrast;
-      case AlertSeverity.success:
+      case db_enums.AlertSeverity.success:
         return DesignTokens.obsidianTeal;
-      case AlertSeverity.warning:
+      case db_enums.AlertSeverity.warning:
         return DesignTokens.ashGold;
-      case AlertSeverity.critical:
+      case db_enums.AlertSeverity.critical:
         return DesignTokens.crimsonWarning;
     }
   }
 
   IconData _getSeverityIcon() {
      switch (widget.alert.severity) {
-      case AlertSeverity.info:
+      case db_enums.AlertSeverity.info:
         return Icons.info_outline_rounded;
-      case AlertSeverity.success:
+      case db_enums.AlertSeverity.success:
         return Icons.check_circle_outline_rounded;
-      case AlertSeverity.warning:
+      case db_enums.AlertSeverity.warning:
         return Icons.warning_amber_rounded;
-      case AlertSeverity.critical:
+      case db_enums.AlertSeverity.critical:
         return Icons.error_outline_rounded;
     }
   }
 
   void _dismiss() {
-    setState(() { widget.alert.isDismissed = true; });
+    ref.read(alertRepositoryProvider).dismiss(widget.alert.id);
   }
 
   void _snooze() {
-    setState(() { widget.alert.isSnoozed = true; });
+    // Snooze for 24 hours by default for now
+    ref.read(alertRepositoryProvider).snooze(widget.alert.id, DateTime.now().add(const Duration(hours: 24)));
   }
 
   @override
   Widget build(BuildContext context) {
-    if (widget.alert.isDismissed || widget.alert.isSnoozed) {
-      return const SizedBox.shrink(); 
-    }
+    // Reactive stream naturally removes dismissed items from the list,
+    // so we don't need a local isDismissed check if we are watching the stream.
+    // However, if we wanted manual override, we'd add it here.
 
     final color = _getSeverityColor();
     return GestureDetector(
@@ -177,13 +202,13 @@ class _InsightCardState extends State<_InsightCard> {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  widget.alert.time,
+                  '${widget.alert.createdAt.hour}:${widget.alert.createdAt.minute.toString().padLeft(2, '0')}',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: DesignTokens.textMediumContrast,
                   ),
                 ),
                 const Spacer(),
-                if (widget.alert.relatedSymbol != null)
+                if (widget.alert.relatedInstrument != null)
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
@@ -191,7 +216,7 @@ class _InsightCardState extends State<_InsightCard> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
-                      widget.alert.relatedSymbol!,
+                      widget.alert.relatedInstrument!,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.obsidianTeal, fontSize: 10, fontWeight: FontWeight.w600),
                     ),
                   ),
@@ -219,7 +244,7 @@ class _InsightCardState extends State<_InsightCard> {
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(3),
                   child: LinearProgressIndicator(
-                    value: widget.alert.confidence,
+                    value: widget.alert.confidence / 100.0,
                     backgroundColor: DesignTokens.graphiteBase,
                     color: color,
                     minHeight: 3,
@@ -227,7 +252,7 @@ class _InsightCardState extends State<_InsightCard> {
                 ),
               ),
               const SizedBox(width: 8),
-              Text('${(widget.alert.confidence * 100).round()}%', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
+              Text('${(widget.alert.confidence).round()}%', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
             ]),
             
             AnimatedCrossFade(
@@ -248,7 +273,7 @@ class _InsightCardState extends State<_InsightCard> {
                       children: [
                         Text('Historical Context', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast, letterSpacing: 0.5)),
                         const SizedBox(height: 6),
-                        Text(widget.alert.historicalContext, style: Theme.of(context).textTheme.bodySmall?.copyWith(height: 1.5)),
+                        Text('Machine-derived evidence stored in Vault.', style: Theme.of(context).textTheme.bodySmall?.copyWith(height: 1.5)),
                       ],
                     ),
                   ),

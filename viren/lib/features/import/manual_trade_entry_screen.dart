@@ -1,24 +1,30 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/design_tokens.dart';
 import '../../core/animations/animation_presets.dart';
+import '../../core/database/providers/database_providers.dart';
+import '../../core/database/enums.dart';
 
-class ManualTradeEntryScreen extends StatefulWidget {
+class ManualTradeEntryScreen extends ConsumerStatefulWidget {
   const ManualTradeEntryScreen({super.key});
 
   @override
-  State<ManualTradeEntryScreen> createState() => _ManualTradeEntryScreenState();
+  ConsumerState<ManualTradeEntryScreen> createState() =>
+      _ManualTradeEntryScreenState();
 }
 
-class _ManualTradeEntryScreenState extends State<ManualTradeEntryScreen> {
+class _ManualTradeEntryScreenState
+    extends ConsumerState<ManualTradeEntryScreen> {
   final _symbolController = TextEditingController();
   final _quantityController = TextEditingController();
   final _priceController = TextEditingController();
   final _reasonController = TextEditingController();
   final _dateController = TextEditingController(text: 'Today');
-  
+
   String? _selectedAction = 'BUY';
   String? _selectedEmotion;
+  bool _isSaving = false;
 
   final List<String> _tags = [];
   final _availableTags = ['Long-term', 'Conviction', 'Experiment', 'Hedge', 'Speculative'];
@@ -44,8 +50,12 @@ class _ManualTradeEntryScreenState extends State<ManualTradeEntryScreen> {
     });
   }
 
-  void _saveTrade() {
-    if (_symbolController.text.isEmpty || _quantityController.text.isEmpty || _priceController.text.isEmpty) {
+  Future<void> _saveTrade() async {
+    final symbol = _symbolController.text.trim();
+    final quantityText = _quantityController.text.trim();
+    final priceText = _priceController.text.trim();
+
+    if (symbol.isEmpty || quantityText.isEmpty || priceText.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Symbol, Quantity, and Price are required.'),
@@ -56,18 +66,78 @@ class _ManualTradeEntryScreenState extends State<ManualTradeEntryScreen> {
       );
       return;
     }
+
+    final quantity = double.tryParse(quantityText);
+    final price = double.tryParse(priceText);
+
+    if (quantity == null || quantity <= 0 || price == null || price <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Quantity and Price must be valid positive numbers.'),
+          backgroundColor: DesignTokens.crimsonWarning,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+      return;
+    }
     
-    // Simulate save
-    Navigator.of(context).pop();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Trade for ${_symbolController.text.toUpperCase()} recorded.'),
-        backgroundColor: DesignTokens.obsidianTeal,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-    );
+    setState(() => _isSaving = true);
+
+    try {
+      final repo = ref.read(tradeRepositoryProvider);
+
+      // Map emotion string to enum value.
+      EmotionalState? emotionEnum;
+      if (_selectedEmotion != null) {
+        emotionEnum = EmotionalState.values.firstWhere(
+          (e) => e.name.toLowerCase() == _selectedEmotion!.toLowerCase(),
+          orElse: () => EmotionalState.calm,
+        );
+      }
+
+      await repo.insertTrade(
+        instrumentSymbol: symbol.toUpperCase(),
+        instrumentName: symbol.toUpperCase(), // Name resolved later via price data
+        tradeType: _selectedAction == 'BUY' ? TradeType.buy : TradeType.sell,
+        quantity: quantity,
+        pricePerUnit: price,
+        tradeTimestamp: DateTime.now().toUtc(),
+        source: TradeSource.manual,
+        reasonText: _reasonController.text.trim().isEmpty
+            ? null
+            : _reasonController.text.trim(),
+        tags: List.from(_tags),
+        emotionalState: emotionEnum,
+      );
+
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Trade for $symbol recorded.'),
+            backgroundColor: DesignTokens.obsidianTeal,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error saving trade: ${e.toString()}'),
+            backgroundColor: DesignTokens.crimsonWarning,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -80,10 +150,12 @@ class _ManualTradeEntryScreenState extends State<ManualTradeEntryScreen> {
           onPressed: () => Navigator.of(context).pop(),
         ),
         actions: [
-          TextButton(
-            onPressed: _saveTrade,
-            child: Text('Save', style: Theme.of(context).textTheme.titleMedium?.copyWith(color: DesignTokens.obsidianTeal, fontWeight: FontWeight.w600)),
-          ),
+          _isSaving 
+            ? const Center(child: Padding(padding: EdgeInsets.only(right: 16), child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: DesignTokens.obsidianTeal))))
+            : TextButton(
+                onPressed: _saveTrade,
+                child: Text('Save', style: Theme.of(context).textTheme.titleMedium?.copyWith(color: DesignTokens.obsidianTeal, fontWeight: FontWeight.w600)),
+              ),
           const SizedBox(width: 8),
         ],
       ),

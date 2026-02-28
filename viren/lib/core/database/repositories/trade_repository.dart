@@ -84,6 +84,7 @@ class TradeRepository {
     EmotionalState? emotionalState,
     int? confidenceLevel,
     String? originImportId,
+    String? rawTradeNo,
   }) async {
     final id = _uuid.v4();
     final now = DateTime.now().toUtc();
@@ -107,6 +108,7 @@ class TradeRepository {
       sourceReference: Value(sourceReference),
       importId: Value(originImportId),
       parseConfidence: Value(parseConfidence),
+      rawTradeNo: Value(rawTradeNo),
       createdAt: Value(now),
       updatedAt: Value(now),
     );

@@ -60,6 +60,9 @@ class Trades extends Table {
   /// Reference to the originating import session.
   TextColumn get importId => text().named('import_id').nullable()();
 
+  /// The raw execution number/ID precisely as it appeared on the statement.
+  TextColumn get rawTradeNo => text().named('raw_trade_no').nullable()();
+
   /// Parser confidence for auto-imported trades (0–100). 100 = manual entry.
   IntColumn get parseConfidence =>
       integer().named('parse_confidence').withDefault(const Constant(100))();

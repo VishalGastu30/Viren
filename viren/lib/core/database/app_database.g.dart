@@ -172,6 +172,17 @@ class $TradesTable extends Trades with TableInfo<$TradesTable, Trade> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _rawTradeNoMeta = const VerificationMeta(
+    'rawTradeNo',
+  );
+  @override
+  late final GeneratedColumn<String> rawTradeNo = GeneratedColumn<String>(
+    'raw_trade_no',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _parseConfidenceMeta = const VerificationMeta(
     'parseConfidence',
   );
@@ -236,6 +247,7 @@ class $TradesTable extends Trades with TableInfo<$TradesTable, Trade> {
     source,
     sourceReference,
     importId,
+    rawTradeNo,
     parseConfidence,
     createdAt,
     updatedAt,
@@ -357,6 +369,15 @@ class $TradesTable extends Trades with TableInfo<$TradesTable, Trade> {
         importId.isAcceptableOrUnknown(data['import_id']!, _importIdMeta),
       );
     }
+    if (data.containsKey('raw_trade_no')) {
+      context.handle(
+        _rawTradeNoMeta,
+        rawTradeNo.isAcceptableOrUnknown(
+          data['raw_trade_no']!,
+          _rawTradeNoMeta,
+        ),
+      );
+    }
     if (data.containsKey('parse_confidence')) {
       context.handle(
         _parseConfidenceMeta,
@@ -457,6 +478,10 @@ class $TradesTable extends Trades with TableInfo<$TradesTable, Trade> {
         DriftSqlType.string,
         data['${effectivePrefix}import_id'],
       ),
+      rawTradeNo: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}raw_trade_no'],
+      ),
       parseConfidence: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}parse_confidence'],
@@ -534,6 +559,9 @@ class Trade extends DataClass implements Insertable<Trade> {
   /// Reference to the originating import session.
   final String? importId;
 
+  /// The raw execution number/ID precisely as it appeared on the statement.
+  final String? rawTradeNo;
+
   /// Parser confidence for auto-imported trades (0–100). 100 = manual entry.
   final int parseConfidence;
 
@@ -562,6 +590,7 @@ class Trade extends DataClass implements Insertable<Trade> {
     required this.source,
     this.sourceReference,
     this.importId,
+    this.rawTradeNo,
     required this.parseConfidence,
     required this.createdAt,
     required this.updatedAt,
@@ -601,6 +630,9 @@ class Trade extends DataClass implements Insertable<Trade> {
     if (!nullToAbsent || importId != null) {
       map['import_id'] = Variable<String>(importId);
     }
+    if (!nullToAbsent || rawTradeNo != null) {
+      map['raw_trade_no'] = Variable<String>(rawTradeNo);
+    }
     map['parse_confidence'] = Variable<int>(parseConfidence);
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
@@ -635,6 +667,9 @@ class Trade extends DataClass implements Insertable<Trade> {
       importId: importId == null && nullToAbsent
           ? const Value.absent()
           : Value(importId),
+      rawTradeNo: rawTradeNo == null && nullToAbsent
+          ? const Value.absent()
+          : Value(rawTradeNo),
       parseConfidence: Value(parseConfidence),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
@@ -669,6 +704,7 @@ class Trade extends DataClass implements Insertable<Trade> {
       ),
       sourceReference: serializer.fromJson<String?>(json['sourceReference']),
       importId: serializer.fromJson<String?>(json['importId']),
+      rawTradeNo: serializer.fromJson<String?>(json['rawTradeNo']),
       parseConfidence: serializer.fromJson<int>(json['parseConfidence']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
@@ -698,6 +734,7 @@ class Trade extends DataClass implements Insertable<Trade> {
       ),
       'sourceReference': serializer.toJson<String?>(sourceReference),
       'importId': serializer.toJson<String?>(importId),
+      'rawTradeNo': serializer.toJson<String?>(rawTradeNo),
       'parseConfidence': serializer.toJson<int>(parseConfidence),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
@@ -721,6 +758,7 @@ class Trade extends DataClass implements Insertable<Trade> {
     TradeSource? source,
     Value<String?> sourceReference = const Value.absent(),
     Value<String?> importId = const Value.absent(),
+    Value<String?> rawTradeNo = const Value.absent(),
     int? parseConfidence,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -743,6 +781,7 @@ class Trade extends DataClass implements Insertable<Trade> {
         ? sourceReference.value
         : this.sourceReference,
     importId: importId.present ? importId.value : this.importId,
+    rawTradeNo: rawTradeNo.present ? rawTradeNo.value : this.rawTradeNo,
     parseConfidence: parseConfidence ?? this.parseConfidence,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
@@ -777,6 +816,9 @@ class Trade extends DataClass implements Insertable<Trade> {
           ? data.sourceReference.value
           : this.sourceReference,
       importId: data.importId.present ? data.importId.value : this.importId,
+      rawTradeNo: data.rawTradeNo.present
+          ? data.rawTradeNo.value
+          : this.rawTradeNo,
       parseConfidence: data.parseConfidence.present
           ? data.parseConfidence.value
           : this.parseConfidence,
@@ -806,6 +848,7 @@ class Trade extends DataClass implements Insertable<Trade> {
           ..write('source: $source, ')
           ..write('sourceReference: $sourceReference, ')
           ..write('importId: $importId, ')
+          ..write('rawTradeNo: $rawTradeNo, ')
           ..write('parseConfidence: $parseConfidence, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
@@ -831,6 +874,7 @@ class Trade extends DataClass implements Insertable<Trade> {
     source,
     sourceReference,
     importId,
+    rawTradeNo,
     parseConfidence,
     createdAt,
     updatedAt,
@@ -855,6 +899,7 @@ class Trade extends DataClass implements Insertable<Trade> {
           other.source == this.source &&
           other.sourceReference == this.sourceReference &&
           other.importId == this.importId &&
+          other.rawTradeNo == this.rawTradeNo &&
           other.parseConfidence == this.parseConfidence &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt &&
@@ -877,6 +922,7 @@ class TradesCompanion extends UpdateCompanion<Trade> {
   final Value<TradeSource> source;
   final Value<String?> sourceReference;
   final Value<String?> importId;
+  final Value<String?> rawTradeNo;
   final Value<int> parseConfidence;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
@@ -898,6 +944,7 @@ class TradesCompanion extends UpdateCompanion<Trade> {
     this.source = const Value.absent(),
     this.sourceReference = const Value.absent(),
     this.importId = const Value.absent(),
+    this.rawTradeNo = const Value.absent(),
     this.parseConfidence = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -920,6 +967,7 @@ class TradesCompanion extends UpdateCompanion<Trade> {
     required TradeSource source,
     this.sourceReference = const Value.absent(),
     this.importId = const Value.absent(),
+    this.rawTradeNo = const Value.absent(),
     this.parseConfidence = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -950,6 +998,7 @@ class TradesCompanion extends UpdateCompanion<Trade> {
     Expression<int>? source,
     Expression<String>? sourceReference,
     Expression<String>? importId,
+    Expression<String>? rawTradeNo,
     Expression<int>? parseConfidence,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
@@ -972,6 +1021,7 @@ class TradesCompanion extends UpdateCompanion<Trade> {
       if (source != null) 'source': source,
       if (sourceReference != null) 'source_reference': sourceReference,
       if (importId != null) 'import_id': importId,
+      if (rawTradeNo != null) 'raw_trade_no': rawTradeNo,
       if (parseConfidence != null) 'parse_confidence': parseConfidence,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
@@ -996,6 +1046,7 @@ class TradesCompanion extends UpdateCompanion<Trade> {
     Value<TradeSource>? source,
     Value<String?>? sourceReference,
     Value<String?>? importId,
+    Value<String?>? rawTradeNo,
     Value<int>? parseConfidence,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
@@ -1018,6 +1069,7 @@ class TradesCompanion extends UpdateCompanion<Trade> {
       source: source ?? this.source,
       sourceReference: sourceReference ?? this.sourceReference,
       importId: importId ?? this.importId,
+      rawTradeNo: rawTradeNo ?? this.rawTradeNo,
       parseConfidence: parseConfidence ?? this.parseConfidence,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -1078,6 +1130,9 @@ class TradesCompanion extends UpdateCompanion<Trade> {
     if (importId.present) {
       map['import_id'] = Variable<String>(importId.value);
     }
+    if (rawTradeNo.present) {
+      map['raw_trade_no'] = Variable<String>(rawTradeNo.value);
+    }
     if (parseConfidence.present) {
       map['parse_confidence'] = Variable<int>(parseConfidence.value);
     }
@@ -1114,6 +1169,7 @@ class TradesCompanion extends UpdateCompanion<Trade> {
           ..write('source: $source, ')
           ..write('sourceReference: $sourceReference, ')
           ..write('importId: $importId, ')
+          ..write('rawTradeNo: $rawTradeNo, ')
           ..write('parseConfidence: $parseConfidence, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
@@ -6456,6 +6512,7 @@ typedef $$TradesTableCreateCompanionBuilder =
       required TradeSource source,
       Value<String?> sourceReference,
       Value<String?> importId,
+      Value<String?> rawTradeNo,
       Value<int> parseConfidence,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
@@ -6479,6 +6536,7 @@ typedef $$TradesTableUpdateCompanionBuilder =
       Value<TradeSource> source,
       Value<String?> sourceReference,
       Value<String?> importId,
+      Value<String?> rawTradeNo,
       Value<int> parseConfidence,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
@@ -6569,6 +6627,11 @@ class $$TradesTableFilterComposer
 
   ColumnFilters<String> get importId => $composableBuilder(
     column: $table.importId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get rawTradeNo => $composableBuilder(
+    column: $table.rawTradeNo,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -6677,6 +6740,11 @@ class $$TradesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get rawTradeNo => $composableBuilder(
+    column: $table.rawTradeNo,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get parseConfidence => $composableBuilder(
     column: $table.parseConfidence,
     builder: (column) => ColumnOrderings(column),
@@ -6764,6 +6832,11 @@ class $$TradesTableAnnotationComposer
   GeneratedColumn<String> get importId =>
       $composableBuilder(column: $table.importId, builder: (column) => column);
 
+  GeneratedColumn<String> get rawTradeNo => $composableBuilder(
+    column: $table.rawTradeNo,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<int> get parseConfidence => $composableBuilder(
     column: $table.parseConfidence,
     builder: (column) => column,
@@ -6824,6 +6897,7 @@ class $$TradesTableTableManager
                 Value<TradeSource> source = const Value.absent(),
                 Value<String?> sourceReference = const Value.absent(),
                 Value<String?> importId = const Value.absent(),
+                Value<String?> rawTradeNo = const Value.absent(),
                 Value<int> parseConfidence = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
@@ -6845,6 +6919,7 @@ class $$TradesTableTableManager
                 source: source,
                 sourceReference: sourceReference,
                 importId: importId,
+                rawTradeNo: rawTradeNo,
                 parseConfidence: parseConfidence,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
@@ -6868,6 +6943,7 @@ class $$TradesTableTableManager
                 required TradeSource source,
                 Value<String?> sourceReference = const Value.absent(),
                 Value<String?> importId = const Value.absent(),
+                Value<String?> rawTradeNo = const Value.absent(),
                 Value<int> parseConfidence = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
@@ -6889,6 +6965,7 @@ class $$TradesTableTableManager
                 source: source,
                 sourceReference: sourceReference,
                 importId: importId,
+                rawTradeNo: rawTradeNo,
                 parseConfidence: parseConfidence,
                 createdAt: createdAt,
                 updatedAt: updatedAt,

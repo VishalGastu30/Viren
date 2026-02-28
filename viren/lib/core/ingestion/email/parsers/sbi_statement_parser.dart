@@ -4,6 +4,8 @@ import '../attachment_handler.dart';
 import '../../../auth/auth_service.dart';
 import '../broker_email_parser.dart';
 import 'pdf_broker_parser.dart';
+import 'dart:convert';
+import 'dart:developer' as developer;
 
 /// Parses statements from digidocemail@sbicapsec.com
 /// Classifies PDFs into:
@@ -30,6 +32,10 @@ class SbiStatementParser extends PdfBrokerParserBase {
     final snapshots = <EmailParsedSnapshot>[];
     final warnings = <String>[];
     final errors = <String>[];
+    
+    int totalRowsDetected = 0;
+    int totalRowsParsed = 0;
+    int totalRejectedRows = 0;
 
     for (final attachment in email.attachments) {
       if (!attachment.isPdf) continue;
@@ -76,22 +82,31 @@ class SbiStatementParser extends PdfBrokerParserBase {
           continue;
         }
 
+        // PHASE 1: Normalize Extracted Text
+        // Replace multiple spaces and newlines with a single space
+        final normalizedText = result.extractedText.replaceAll(RegExp(r'\s+'), ' ').trim();
+
         if (isCNB) {
           // Parse Contract Note (CNB) for trade price fallbacks
-          // Very strict regex for Contract Note tabular data
+          // PHASE 2: Tokenize from RIGHT-TO-LEFT across the tabular structure
           final cnPattern = RegExp(
-            r'([A-Z][A-Z0-9\-]{1,20})\s+(BUY|SELL)\s+(\d+(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)',
-            caseSensitive: false,
+            r'\b(B|S)\s+(.+?)\s+([A-Z0-9\-]+)\s+([A-Z]{2})\s+(\d{15,25})\s+(\d{2}:\d{2}:\d{2}\s(?:AM|PM))\s+(\d+)\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)\b',
+            caseSensitive: true,
           );
 
-          for (final match in cnPattern.allMatches(result.extractedText)) {
-            try {
-              final symbol = match.group(1)!;
-              final typeStr = match.group(2)!.toUpperCase();
-              final qty = double.parse(match.group(3)!);
-              final price = double.parse(match.group(4)!.replaceAll(',', ''));
+          final matches = cnPattern.allMatches(normalizedText);
+          final rowsDetected = matches.length;
+          totalRowsDetected += rowsDetected;
 
-              final tradeType = typeStr == 'BUY' ? TradeType.buy : TradeType.sell;
+          for (final match in matches) {
+            try {
+              final typeStr = match.group(1)!;
+              final symbol = match.group(3)!;
+              final tradeNo = match.group(5)!;
+              final qty = double.parse(match.group(7)!);
+              final price = double.parse(match.group(8)!.replaceAll(',', ''));
+
+              final tradeType = typeStr == 'B' ? TradeType.buy : TradeType.sell;
 
               trades.add(EmailParsedTrade(
                 symbol: symbol,
@@ -104,11 +119,30 @@ class SbiStatementParser extends PdfBrokerParserBase {
                 broker: brokerName,
                 confidence: 85, // Lower than NSE Direct, used as fallback
                 sourceMessageHash: result.attachmentHash,
+                tradeNo: tradeNo,
               ));
+              
+              totalRowsParsed++;
             } catch (e) {
-              warnings.add('Failed to parse a CNB row: $e');
+              totalRejectedRows++;
+              warnings.add('Failed to extract canonical row data from normalized CNB PDF: $e');
             }
           }
+          
+          if (rowsDetected > 0 && totalRowsParsed == 0) {
+            errors.add('Parser logic bug: Detected $rowsDetected rows but generated 0 trades in SBI CNB.');
+          }
+
+          // REQUIRED DEBUG OUTPUT per user request
+          final debugPayload = {
+            "pdf": attachment.filename,
+            "rows_detected": rowsDetected,
+            "rows_parsed": rowsDetected - totalRejectedRows, // within this pdf
+            "trades_created": trades.where((t) => t.sourceMessageHash == result.attachmentHash).length,
+            "rejected_rows": totalRejectedRows,
+          };
+          developer.log(jsonEncode(debugPayload), name: 'SbiStatementParser');
+          
         } else if (isDMRG) {
           // Parse Daily Margin Statement (DMRG) for ledger cross-check snapshots
           final marginPattern = RegExp(
@@ -116,7 +150,7 @@ class SbiStatementParser extends PdfBrokerParserBase {
             caseSensitive: false,
           );
           
-          final match = marginPattern.firstMatch(result.extractedText);
+          final match = marginPattern.firstMatch(normalizedText);
           if (match != null) {
             try {
               final valStr = match.group(1)!;
@@ -152,6 +186,9 @@ class SbiStatementParser extends PdfBrokerParserBase {
       aggregateConfidence: avgConfidence,
       warnings: warnings,
       errors: errors,
+      rowsDetected: totalRowsDetected,
+      rowsParsed: totalRowsParsed,
+      rejectedRows: totalRejectedRows,
     );
   }
 }

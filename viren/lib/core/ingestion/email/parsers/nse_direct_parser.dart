@@ -4,6 +4,8 @@ import '../attachment_handler.dart';
 import '../../../auth/auth_service.dart';
 import '../broker_email_parser.dart';
 import 'pdf_broker_parser.dart';
+import 'dart:convert';
+import 'dart:developer' as developer;
 
 /// Parses "Trades Executed at NSE" from nse-direct@nse.co.in.
 /// This is the ground truth for pure execution trades (BUY/SELL).
@@ -26,6 +28,10 @@ class NseDirectParser extends PdfBrokerParserBase {
     final trades = <EmailParsedTrade>[];
     final warnings = <String>[];
     final errors = <String>[];
+    
+    int totalRowsDetected = 0;
+    int totalRowsParsed = 0;
+    int totalRejectedRows = 0;
 
     for (final attachment in email.attachments) {
       if (!attachment.isPdf) continue;
@@ -49,27 +55,36 @@ class NseDirectParser extends PdfBrokerParserBase {
           continue;
         }
 
-        if (result.extractedText.isEmpty) {
-          warnings.add('Decrypted NSE Direct PDF is empty.');
+        // PHASE 1: Normalize Extracted Text
+        // Replace multiple spaces and newlines with a single space
+        final normalizedText = result.extractedText.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+        if (normalizedText.isEmpty) {
+          warnings.add('Decrypted NSE Direct PDF is empty or missing tabular data.');
           continue;
         }
 
-        // Logic to extract trades from NSE Direct PDF text.
-        // Look for tabular data containing execution quantities and prices.
-        // Example pattern: SYMBOL BUY/SELL QTY PRICE
+        // PHASE 2: Tokenize From THE END
+        // 1: B/S | 2: Security Name | 3: Symbol | 4: Series | 5: Trade No | 6: Time | 7: Qty | 8: Price | 9: Traded Value
         final pattern = RegExp(
-          r'([A-Z][A-Z0-9\-]{1,20})\s+(BUY|SELL)\s+(\d+(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)',
-          caseSensitive: false,
+          r'\b(B|S)\s+(.+?)\s+([A-Z0-9\-]+)\s+([A-Z]{2})\s+(\d{15,25})\s+(\d{2}:\d{2}:\d{2}\s(?:AM|PM))\s+(\d+)\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)\b',
+          caseSensitive: true,
         );
 
-        for (final match in pattern.allMatches(result.extractedText)) {
-          try {
-            final symbol = match.group(1)!;
-            final typeStr = match.group(2)!.toUpperCase();
-            final qty = double.parse(match.group(3)!);
-            final price = double.parse(match.group(4)!.replaceAll(',', ''));
+        final matches = pattern.allMatches(normalizedText);
+        final rowsDetected = matches.length;
+        
+        totalRowsDetected += rowsDetected;
 
-            final tradeType = typeStr == 'BUY' ? TradeType.buy : TradeType.sell;
+        for (final match in matches) {
+          try {
+            final typeStr = match.group(1)!;
+            final symbol = match.group(3)!;
+            final tradeNo = match.group(5)!;
+            final qty = double.parse(match.group(7)!);
+            final price = double.parse(match.group(8)!.replaceAll(',', ''));
+
+            final tradeType = typeStr == 'B' ? TradeType.buy : TradeType.sell;
 
             trades.add(EmailParsedTrade(
               symbol: symbol,
@@ -80,13 +95,33 @@ class NseDirectParser extends PdfBrokerParserBase {
               pricePerUnit: price,
               tradeDate: email.date,
               broker: brokerName,
-              confidence: 95, // High confidence because it's a direct NSE extract
-              sourceMessageHash: result.attachmentHash, // Link to PDF hash
+              confidence: 95, 
+              sourceMessageHash: result.attachmentHash, 
+              tradeNo: tradeNo,
             ));
+            
+            totalRowsParsed++;
           } catch (e) {
-            warnings.add('Failed to parse a row in NSE Direct PDF: $e');
+            totalRejectedRows++;
+            warnings.add('Failed to extract canonical row data from normalized NSE Direct PDF: $e');
           }
         }
+        
+        // Debug invariant
+        if (rowsDetected > 0 && trades.isEmpty) {
+           errors.add('Parser logic bug: Detected $rowsDetected rows but generated 0 trades. Review regex targeting in Phase 2.');
+        }
+
+        // REQUIRED DEBUG OUTPUT per user request
+        final debugPayload = {
+          "pdf": attachment.filename,
+          "rows_detected": rowsDetected,
+          "rows_parsed": rowsDetected - totalRejectedRows, // within this pdf
+          "trades_created": trades.where((t) => t.sourceMessageHash == result.attachmentHash).length,
+          "rejected_rows": totalRejectedRows,
+        };
+        developer.log(jsonEncode(debugPayload), name: 'NseDirectParser');
+
       } catch (e) {
         errors.add('Error processing NSE Direct attachment: $e');
       }
@@ -106,6 +141,9 @@ class NseDirectParser extends PdfBrokerParserBase {
       aggregateConfidence: avgConfidence,
       warnings: warnings,
       errors: errors,
+      rowsDetected: totalRowsDetected,
+      rowsParsed: totalRowsParsed,
+      rejectedRows: totalRejectedRows,
     );
   }
 }

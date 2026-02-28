@@ -25,6 +25,7 @@ class EmailParsedTrade {
   final int confidence; // 0–100
   final String sourceMessageHash; // SHA-256 of message body
   final List<String> warnings;
+  final String? tradeNo;
 
   const EmailParsedTrade({
     required this.symbol,
@@ -38,6 +39,7 @@ class EmailParsedTrade {
     required this.broker,
     required this.confidence,
     required this.sourceMessageHash,
+    this.tradeNo,
     this.warnings = const [],
   });
 }
@@ -64,6 +66,11 @@ class EmailParseResult {
   final int aggregateConfidence;
   final List<String> warnings;
   final List<String> errors;
+  
+  // Debug Telemetry for PDF Parsing
+  final int rowsDetected;
+  final int rowsParsed;
+  final int rejectedRows;
 
   const EmailParseResult({
     required this.messageId,
@@ -72,6 +79,9 @@ class EmailParseResult {
     required this.aggregateConfidence,
     required this.warnings,
     required this.errors,
+    this.rowsDetected = 0,
+    this.rowsParsed = 0,
+    this.rejectedRows = 0,
   });
 
   bool get hasTrades => trades.isNotEmpty;

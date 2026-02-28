@@ -271,6 +271,7 @@ class EmailImportService {
             parseConfidence: trade.confidence,
             tradeTimestamp: trade.tradeDate,
             originImportId: importId,
+            rawTradeNo: trade.tradeNo,
           );
           successful++;
         } catch (e) {

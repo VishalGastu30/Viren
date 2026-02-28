@@ -271,10 +271,6 @@ class _ImportCenterScreenState extends ConsumerState<ImportCenterScreen> with Si
   // ── Email Scan ──────────────────────────────────────────────────────────────
 
   Future<void> _scanEmails() async {
-    // 1. First ensure PAN is available for PDF decryption
-    final panAvailable = await _ensurePanAvailable();
-    if (!panAvailable) return; // User cancelled PAN entry
-
     _startScanning('Connecting to Gmail...');
 
     try {
@@ -284,22 +280,45 @@ class _ImportCenterScreenState extends ConsumerState<ImportCenterScreen> with Si
       final tokenVault = await TokenVault.create();
       final importService = ref.read(emailImportServiceProvider);
 
-      setState(() => _scanStatusMessage = 'Scanning broker emails...');
-      
-      // We pass `since: null` to allow the ScannerController to perform
-      // an unbounded historical scan if this is the first run.
+      // ── STAGE 1: DISCOVERY (PAN not needed yet) ────────────────────────
+      setState(() => _scanStatusMessage = 'Searching for broker emails...');
+
       final preview = await importService.scan(
         authService: authService,
         tokenVault: tokenVault,
-        since: null, 
+        since: null,
       );
 
       _stopScanning();
-
       if (!mounted) return;
 
+      // ── 3-TIER ERROR MESSAGING ─────────────────────────────────────────
+      // Tier 1: Zero broker emails found (PAN is irrelevant)
+      if (preview.noBrokerEmailsExist) {
+        _showErrorSnack(
+          'No broker emails found from NSE or SBI in your Gmail inbox.',
+        );
+        return;
+      }
+
+      // Tier 2: Emails exist, but all PDFs failed to decrypt (PAN problem)
+      if (preview.allDecryptionsFailed) {
+        final emailCount = preview.totalBrokerEmailsFound;
+        final failCount = preview.pdfDecryptionFailures;
+        _showErrorSnack(
+          'Found $emailCount broker emails, but $failCount PDF(s) failed to decrypt. '
+          'Please check your PAN is correct.',
+        );
+        return;
+      }
+
+      // Tier 3: Normal flow — show preview with trades
       if (!preview.hasTrades) {
-        _showErrorSnack('No broker emails with trades found. Check your PAN and try again.');
+        // Emails found but no parseable trades (unusual)
+        _showErrorSnack(
+          'Found ${preview.totalBrokerEmailsFound} broker emails '
+          'but could not extract any trades from ${preview.totalPdfAttachments} PDFs.',
+        );
         return;
       }
 
@@ -558,7 +577,7 @@ class _ImportCenterScreenState extends ConsumerState<ImportCenterScreen> with Si
                   ]),
                   const SizedBox(height: 16),
                   // ── Metrics Grid ──
-                  _PreviewRow(label: 'Emails scanned', value: '${preview.totalEmailsScanned}'),
+                  _PreviewRow(label: 'Emails found', value: '${preview.totalBrokerEmailsFound}'),
                   const SizedBox(height: 8),
                   _PreviewRow(label: 'Trades found', value: '${preview.totalTradesFound}'),
                   const SizedBox(height: 8),

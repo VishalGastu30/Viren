@@ -17,45 +17,63 @@ import 'parsers/sbi_statement_parser.dart';
 import '../tallying/ledger_engine.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EmailImportService — Orchestrates the email ingestion pipeline.
+// EmailImportService — Orchestrates the 3-stage email ingestion pipeline.
 //
-// Flow:
-//   1. Connect to email via EmailConnector
-//   2. Filter by broker sender whitelist
-//   3. Parse with broker-specific structured parsers
-//   4. Return preview for user confirmation
-//   5. On confirmation, persist via TradeRepository
+// Stage 1: DISCOVERY  — Query Gmail, fetch full messages (PAN-independent)
+// Stage 2: DECRYPTION — Download PDFs, decrypt with PAN, extract text
+// Stage 3: TALLYING   — LedgerEngine validates and cross-checks
 //
-// Security invariants:
-//   • Email body is NEVER persisted — only SHA-256 hash
-//   • OAuth tokens stored encrypted (handled by caller)
-//   • No full inbox sync
-//   • Read-only access
+// CRITICAL DESIGN RULE:
+//   Discovery MUST succeed independently of PAN.
+//   PAN failure ≠ "no broker emails".
+//   These are two completely different failure states.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Preview of what was found in the email scan.
 class EmailImportPreview {
+  // ── Stage 1: Discovery (PAN-independent) ──
+  final int totalBrokerEmailsFound;
+  final int totalPdfAttachments;
+
+  // ── Stage 2: Decryption + Parsing ──
   final List<EmailParseResult> results;
   final int totalTradesFound;
-  final int totalEmailsScanned;
-  final int aggregateConfidence;
   final int totalSnapshotsFound;
+  final int aggregateConfidence;
+  final int pdfDecryptionFailures;
+  final List<String> decryptionErrors;
+
+  // ── Stage 3: Ledger ──
   final List<String> ledgerDiscrepancies;
   final List<String> ledgerErrors;
 
   const EmailImportPreview({
+    required this.totalBrokerEmailsFound,
+    required this.totalPdfAttachments,
     required this.results,
     required this.totalTradesFound,
-    required this.totalEmailsScanned,
     required this.aggregateConfidence,
     this.totalSnapshotsFound = 0,
+    this.pdfDecryptionFailures = 0,
+    this.decryptionErrors = const [],
     this.ledgerDiscrepancies = const [],
     this.ledgerErrors = const [],
   });
 
-  bool get requiresConfirmation => aggregateConfidence < 90 || ledgerDiscrepancies.isNotEmpty;
+  /// True if Gmail returned zero broker emails (PAN is irrelevant here).
+  bool get noBrokerEmailsExist => totalBrokerEmailsFound == 0;
+
+  /// True if broker emails exist but all PDFs failed to decrypt.
+  bool get allDecryptionsFailed =>
+      totalBrokerEmailsFound > 0 &&
+      pdfDecryptionFailures > 0 &&
+      totalTradesFound == 0 &&
+      totalSnapshotsFound == 0;
+
   bool get hasTrades => totalTradesFound > 0;
   bool get hasDiscrepancies => ledgerDiscrepancies.isNotEmpty;
+  bool get requiresConfirmation =>
+      aggregateConfidence < 90 || ledgerDiscrepancies.isNotEmpty;
 }
 
 /// Result of committing email-imported trades.
@@ -86,21 +104,21 @@ class EmailImportService {
   })  : _tradeRepo = tradeRepository,
         _importDao = importDao;
 
-  /// Scans for broker emails and returns a preview.
+  /// Scans for broker emails using a strict 3-stage pipeline.
   ///
-  /// This method:
-  ///   1. Connects to email server via ScannerController
-  ///   2. Fetches unbounded emails from exact broker senders
-  ///   3. Parses PDFs and extracts Trades & Snapshots
-  ///   4. Runs LedgerEngine to validate and tally
+  /// Stage 1: DISCOVERY — PAN-independent Gmail query.
+  /// Stage 2: DECRYPTION + PARSING — PAN-dependent PDF processing.
+  /// Stage 3: TALLYING — LedgerEngine validation.
   Future<EmailImportPreview> scan({
     required AuthService authService,
     required TokenVault tokenVault,
-    DateTime? since, // If null -> unbounded full scan (First Run)
-    int maxResults = 100,
+    DateTime? since,
+    int maxResults = 500,
   }) async {
+    // ──────────────────────────────────────────────────────────────────────
+    // STAGE 1: DISCOVERY (PAN is NOT involved here)
+    // ──────────────────────────────────────────────────────────────────────
     final scanner = ScannerController();
-    final attachmentHandler = AttachmentHandler(tokenVault);
 
     final emails = await scanner.scanForBrokerEmails(
       authService: authService,
@@ -108,18 +126,31 @@ class EmailImportService {
       maxResults: maxResults,
     );
 
+    // Count PDFs discovered (before any decryption attempt)
+    int totalPdfs = 0;
+    for (final email in emails) {
+      totalPdfs += email.attachments.where((a) => a.isPdf).length;
+    }
+
+    // If zero emails, report that clearly — PAN is NOT the problem.
     if (emails.isEmpty) {
       return const EmailImportPreview(
+        totalBrokerEmailsFound: 0,
+        totalPdfAttachments: 0,
         results: [],
         totalTradesFound: 0,
-        totalEmailsScanned: 0,
         aggregateConfidence: 0,
       );
     }
 
+    // ──────────────────────────────────────────────────────────────────────
+    // STAGE 2: DECRYPTION + PARSING (PAN-dependent)
+    // ──────────────────────────────────────────────────────────────────────
+    final attachmentHandler = AttachmentHandler(tokenVault);
     final parserResults = <EmailParseResult>[];
-    
-    // Register V2 PDF Parsers
+    int decryptFailures = 0;
+    final decryptErrors = <String>[];
+
     final parsers = <PdfBrokerParserBase>[
       NseDirectParser(),
       NseAlertsParser(),
@@ -128,26 +159,37 @@ class EmailImportService {
 
     for (final email in emails) {
       final fromEmail = email.from.toLowerCase();
-      
+
       for (final parser in parsers) {
         if (parser.exactSenders.any((s) => fromEmail.contains(s))) {
-          final res = await parser.parsePdf(email, scanner, attachmentHandler, authService);
-          if (res.trades.isNotEmpty || res.snapshots.isNotEmpty || res.errors.isNotEmpty) {
-            parserResults.add(res);
+          final res = await parser.parsePdf(
+              email, scanner, attachmentHandler, authService);
+
+          // Track decrypt failures from this result's errors
+          for (final err in res.errors) {
+            if (err.contains('decrypt') ||
+                err.contains('PAN') ||
+                err.contains('password')) {
+              decryptFailures++;
+              decryptErrors.add(err);
+            }
           }
-          break; // Stop checking other parsers if one matched
+
+          parserResults.add(res);
+          break;
         }
       }
     }
 
-    // Run Ledger Engine
+    // ──────────────────────────────────────────────────────────────────────
+    // STAGE 3: TALLYING (LedgerEngine)
+    // ──────────────────────────────────────────────────────────────────────
     final ledger = LedgerEngine();
     final ledgerResult = ledger.reconstruct(parserResults);
 
     final totalTrades = ledgerResult.validatedTrades.length;
-    final totalEmailsScanned = emails.length;
 
-    // Calculate confidence based on parsed results
+    // Compute confidence
     int totalConf = 0;
     int confCount = 0;
     for (final res in parserResults) {
@@ -156,47 +198,45 @@ class EmailImportService {
         confCount++;
       }
     }
-    final avgConfidence = confCount == 0 ? 0 : (totalConf / confCount).round();
+    final avgConfidence =
+        confCount == 0 ? 0 : (totalConf / confCount).round();
 
-    // Count total snapshots
     int totalSnapshots = 0;
     for (final res in parserResults) {
       totalSnapshots += res.snapshots.length;
     }
 
     return EmailImportPreview(
+      totalBrokerEmailsFound: emails.length,
+      totalPdfAttachments: totalPdfs,
       results: parserResults,
       totalTradesFound: totalTrades,
-      totalEmailsScanned: totalEmailsScanned,
       aggregateConfidence: avgConfidence,
       totalSnapshotsFound: totalSnapshots,
+      pdfDecryptionFailures: decryptFailures,
+      decryptionErrors: decryptErrors,
       ledgerDiscrepancies: ledgerResult.discrepancies,
       ledgerErrors: ledgerResult.errors,
     );
   }
 
   /// Commits parsed email trades to the database.
-  ///
-  /// Call this after user confirms the preview.
   Future<EmailImportResult> commit(EmailImportPreview preview) async {
     final importId = _uuid.v4();
     final errors = <String>[];
     int successful = 0;
     int total = 0;
 
-    // Log the import session
-    final totalTrades = preview.totalTradesFound;
     await _importDao.logImport(
       ImportsCompanion.insert(
         id: importId,
         importType: ImportType.email,
         sourceName: 'Email Import',
-        rowsImported: Value(totalTrades),
+        rowsImported: Value(preview.totalTradesFound),
         successRate: Value(preview.aggregateConfidence),
       ),
     );
 
-    // Insert each trade
     for (final result in preview.results) {
       for (final trade in result.trades) {
         total++;

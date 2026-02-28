@@ -8,6 +8,7 @@ import '../../core/theme/design_tokens.dart';
 import '../../core/auth/token_vault.dart';
 import '../../core/auth/auth_service.dart';
 import '../../core/ingestion/email/email_import_service.dart';
+import '../../core/ingestion/email/gmail_smoke_test.dart';
 import '../../core/ingestion/csv_import_service.dart';
 import '../../core/database/providers/database_providers.dart';
 import '../../core/database/app_database.dart';
@@ -277,11 +278,37 @@ class _ImportCenterScreenState extends ConsumerState<ImportCenterScreen> with Si
       final authService = await AuthService.create(scopes: [
         'https://www.googleapis.com/auth/gmail.readonly'
       ]);
+
+      // ═══════════════════════════════════════════════════════════════════
+      // STEP 0: GMAIL PROOF MODE (smoke test)
+      // Proves Gmail is reachable BEFORE any PAN/parsing/attachment logic.
+      // ═══════════════════════════════════════════════════════════════════
+      setState(() => _scanStatusMessage = 'Testing Gmail connection...');
+
+      final proofResult = await GmailSmokeTest.run(authService);
+
+      if (!mounted) { _stopScanning(); return; }
+
+      if (!proofResult.gmailReachable) {
+        _stopScanning();
+        await _showGmailDiagnosticDialog(proofResult);
+        return;
+      }
+
+      if (proofResult.messageCount == 0) {
+        _stopScanning();
+        await _showGmailDiagnosticDialog(proofResult);
+        return;
+      }
+
+      // ═══════════════════════════════════════════════════════════════════
+      // Gmail is PROVEN reachable and has broker emails.
+      // Now run the full 3-stage scan pipeline.
+      // ═══════════════════════════════════════════════════════════════════
+      setState(() => _scanStatusMessage = 'Scanning ${proofResult.messageCount} broker emails...');
+
       final tokenVault = await TokenVault.create();
       final importService = ref.read(emailImportServiceProvider);
-
-      // ── STAGE 1: DISCOVERY (PAN not needed yet) ────────────────────────
-      setState(() => _scanStatusMessage = 'Searching for broker emails...');
 
       final preview = await importService.scan(
         authService: authService,
@@ -292,253 +319,136 @@ class _ImportCenterScreenState extends ConsumerState<ImportCenterScreen> with Si
       _stopScanning();
       if (!mounted) return;
 
-      // ── 3-TIER ERROR MESSAGING ─────────────────────────────────────────
-      // Tier 1: Zero broker emails found (PAN is irrelevant)
+      // 3-Tier error messaging
       if (preview.noBrokerEmailsExist) {
-        _showErrorSnack(
-          'No broker emails found from NSE or SBI in your Gmail inbox.',
-        );
+        _showErrorSnack('No broker emails found from NSE or SBI.');
         return;
       }
 
-      // Tier 2: Emails exist, but all PDFs failed to decrypt (PAN problem)
       if (preview.allDecryptionsFailed) {
-        final emailCount = preview.totalBrokerEmailsFound;
-        final failCount = preview.pdfDecryptionFailures;
         _showErrorSnack(
-          'Found $emailCount broker emails, but $failCount PDF(s) failed to decrypt. '
-          'Please check your PAN is correct.',
+          'Found ${preview.totalBrokerEmailsFound} broker emails, but '
+          '${preview.pdfDecryptionFailures} PDF(s) failed to decrypt. Check your PAN.',
         );
         return;
       }
 
-      // Tier 3: Normal flow — show preview with trades
       if (!preview.hasTrades) {
-        // Emails found but no parseable trades (unusual)
         _showErrorSnack(
-          'Found ${preview.totalBrokerEmailsFound} broker emails '
-          'but could not extract any trades from ${preview.totalPdfAttachments} PDFs.',
+          'Found ${preview.totalBrokerEmailsFound} emails but could not '
+          'extract trades from ${preview.totalPdfAttachments} PDFs.',
         );
         return;
       }
 
-      // Show preview confirmation dialog
       final confirmed = await _showEmailPreviewDialog(preview);
       if (confirmed != true) return;
 
-      // Commit
       _startScanning('Importing trades...');
       final result = await importService.commit(preview);
       _stopScanning();
 
       if (mounted) {
         _showSuccessSnack(
-          'Imported ${result.successfulTrades} trades from email'
+          'Imported ${result.successfulTrades} trades'
           '${result.failedTrades > 0 ? ' (${result.failedTrades} failed)' : ''}.'
         );
       }
     } catch (e) {
       _stopScanning();
       if (mounted) {
-        final errorMsg = e.toString().replaceFirst('Exception: ', '');
-        _showErrorSnack(errorMsg);
+        _showErrorSnack(e.toString().replaceFirst('Exception: ', ''));
       }
     }
   }
 
-  /// Ensures PAN is available in the Vault for PDF decryption.
-  /// Shows a dialog if PAN is not yet stored.
-  Future<bool> _ensurePanAvailable() async {
-    // Check session-only PAN first
-    if (_sessionPan != null && _sessionPan!.isNotEmpty) return true;
-
-    try {
-      final vault = await TokenVault.create();
-      final existingPan = await vault.getPan();
-      if (existingPan != null && existingPan.isNotEmpty) return true;
-
-      if (!mounted) return false;
-      final result = await _showPanInputDialog();
-      if (result == null || result.isEmpty) {
-        // User chose "don't remember" — check _sessionPan set by dialog
-        return _sessionPan != null && _sessionPan!.isNotEmpty;
-      }
-
-      await vault.savePan(result);
-      return true;
-    } catch (e) {
-      // Vault initialization failed — proceed anyway (non-encrypted PDFs may still work)
-      return true;
-    }
-  }
-
-  /// Shows a secure PAN input dialog.
-  Future<String?> _showPanInputDialog() {
-    final panController = TextEditingController();
-    bool rememberPan = true;
-
-    return showDialog<String>(
+  /// Shows a diagnostic dialog with the Gmail smoke test results.
+  Future<void> _showGmailDiagnosticDialog(GmailProofResult result) async {
+    if (!mounted) return;
+    await showDialog(
       context: context,
-      barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => Dialog(
-          backgroundColor: DesignTokens.graphiteSurface,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      builder: (ctx) => Dialog(
+        backgroundColor: DesignTokens.graphiteSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 500, maxWidth: 400),
           child: Padding(
-            padding: const EdgeInsets.all(28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: DesignTokens.obsidianTeal.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(12),
+            padding: const EdgeInsets.all(24),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Icon(
+                      result.gmailReachable
+                          ? Icons.warning_amber_rounded
+                          : Icons.error_outline_rounded,
+                      color: result.gmailReachable ? Colors.amber : Colors.red,
                     ),
-                    child: const Icon(Icons.lock_outline_rounded, color: DesignTokens.obsidianTeal, size: 22),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Text('PAN Required', style: Theme.of(context).textTheme.titleLarge),
-                  ),
-                ]),
-                const SizedBox(height: 16),
-                Text(
-                  'Contract note PDFs from your broker are password-protected with your PAN (Permanent Account Number) in UPPERCASE.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: DesignTokens.textMediumContrast,
-                    height: 1.5,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: DesignTokens.obsidianTeal.withValues(alpha: 0.06),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: DesignTokens.obsidianTeal.withValues(alpha: 0.15)),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.shield_rounded, color: DesignTokens.obsidianTeal.withValues(alpha: 0.6), size: 16),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Your PAN is encrypted and stored locally. It never leaves your device.',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: DesignTokens.obsidianTeal,
-                            fontSize: 11,
-                          ),
+                    const SizedBox(width: 12),
+                    Expanded(child: Text(
+                      result.gmailReachable
+                          ? 'Gmail Reachable — No Broker Emails'
+                          : 'Gmail Connection Failed',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    )),
+                  ]),
+                  const SizedBox(height: 16),
+                  _DiagRow(label: 'Gmail reachable', value: result.gmailReachable ? 'Yes ✓' : 'No ✗'),
+                  _DiagRow(label: 'Messages found', value: '${result.messageCount}'),
+                  _DiagRow(label: 'Auth email', value: result.authenticatedEmail ?? 'unknown'),
+                  _DiagRow(label: 'Token (prefix)', value: result.tokenPrefix ?? 'none'),
+                  _DiagRow(label: 'Token expiry', value: result.tokenExpiry?.toIso8601String() ?? 'unknown'),
+                  _DiagRow(label: 'Scopes', value: result.grantedScopes.isEmpty
+                      ? 'none'
+                      : result.grantedScopes.join('\n')),
+                  if (result.errorMessage != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        result.errorMessage!,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.red.shade300,
                         ),
                       ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 20),
-                TextField(
-                  controller: panController,
-                  textCapitalization: TextCapitalization.characters,
-                  maxLength: 10,
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    fontFamily: 'monospace',
-                    letterSpacing: 3,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: 'ABCDE1234F',
-                    hintStyle: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: DesignTokens.textMediumContrast.withValues(alpha: 0.3),
-                      fontFamily: 'monospace',
-                      letterSpacing: 3,
                     ),
-                    filled: true,
-                    fillColor: DesignTokens.graphiteBase,
-                    counterText: '',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: const BorderSide(color: DesignTokens.obsidianTeal, width: 1.5),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                    prefixIcon: const Icon(Icons.badge_outlined, color: DesignTokens.textMediumContrast),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                GestureDetector(
-                  onTap: () => setDialogState(() => rememberPan = !rememberPan),
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: Checkbox(
-                          value: rememberPan,
-                          onChanged: (v) => setDialogState(() => rememberPan = v ?? true),
-                          activeColor: DesignTokens.obsidianTeal,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                          side: BorderSide(color: DesignTokens.textMediumContrast.withValues(alpha: 0.5)),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        'Remember PAN for future scans',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Row(children: [
-                  Expanded(
-                    child: TextButton(
-                      onPressed: () => Navigator.pop(ctx, null),
-                      child: Text('Cancel', style: Theme.of(context).textTheme.bodyMedium),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
+                  ],
+                  if (result.sampleSubjects.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text('Sample emails:', style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: DesignTokens.textMediumContrast,
+                    )),
+                    const SizedBox(height: 4),
+                    ...result.sampleSubjects.map((s) => Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(s, style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontFamily: 'monospace', fontSize: 10,
+                        color: DesignTokens.obsidianTeal,
+                      )),
+                    )),
+                  ],
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: () {
-                        final pan = panController.text.trim().toUpperCase();
-                        if (_isValidPan(pan)) {
-                          Navigator.pop(ctx, rememberPan ? pan : null);
-                          // If not remembering, we still need PAN for this session
-                          if (!rememberPan) {
-                            // Store temporarily and clear after scan
-                            _sessionPan = pan;
-                          }
-                        } else {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: const Text('Enter a valid 10-character PAN (e.g. ABCDE1234F)'),
-                              backgroundColor: DesignTokens.crimsonWarning,
-                              behavior: SnackBarBehavior.floating,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            ),
-                          );
-                        }
-                      },
+                      onPressed: () => Navigator.pop(ctx),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: DesignTokens.obsidianTeal,
                         foregroundColor: DesignTokens.graphiteBase,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
                       ),
-                      child: const Text('Continue'),
+                      child: const Text('Close'),
                     ),
                   ),
-                ]),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -546,13 +456,6 @@ class _ImportCenterScreenState extends ConsumerState<ImportCenterScreen> with Si
     );
   }
 
-  /// Validates PAN format: 5 letters + 4 digits + 1 letter
-  bool _isValidPan(String pan) {
-    if (pan.length != 10) return false;
-    return RegExp(r'^[A-Z]{5}[0-9]{4}[A-Z]$').hasMatch(pan);
-  }
-
-  String? _sessionPan;
 
 
   Future<bool?> _showEmailPreviewDialog(EmailImportPreview preview) {
@@ -847,6 +750,36 @@ class _PreviewRow extends StatelessWidget {
         Text(label, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: DesignTokens.textMediumContrast)),
         Text(value, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
       ],
+    );
+  }
+}
+
+class _DiagRow extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _DiagRow({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 110,
+            child: Text(label, style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: DesignTokens.textMediumContrast,
+            )),
+          ),
+          Expanded(
+            child: Text(value, style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              fontFamily: 'monospace', fontWeight: FontWeight.w600, fontSize: 11,
+            )),
+          ),
+        ],
+      ),
     );
   }
 }

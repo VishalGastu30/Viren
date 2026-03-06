@@ -46,6 +46,27 @@ class Trades extends Table {
   /// Brokerage + STT + other charges. Nullable when unknown.
   RealColumn get charges => real().named('charges').nullable()();
 
+  /// Real column for brokerage charges.
+  RealColumn get brokerage => real().named('brokerage').nullable()();
+
+  /// Real column for securities transaction tax (STT).
+  RealColumn get stt => real().named('stt').nullable()();
+
+  /// Real column for goods and services tax (GST).
+  RealColumn get gst => real().named('gst').nullable()();
+
+  /// Real column for other levies and stamp duty.
+  RealColumn get otherLevies => real().named('other_levies').nullable()();
+
+  /// The net amount computed after applying all levies to the gross amount.
+  RealColumn get netAmountAfterLevies => real().named('net_amount_after_levies').nullable()();
+
+  /// The true cost basis calculated including all charges.
+  RealColumn get trueCostBasis => real().named('true_cost_basis').nullable()();
+
+  /// Reconciliation status.
+  IntColumn get status => intEnum<TradeStatus>().named('status').withDefault(const Constant(0))();
+
   /// ISO 4217 currency code.
   TextColumn get currency =>
       text().named('currency').withDefault(const Constant('INR'))();

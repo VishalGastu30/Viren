@@ -144,23 +144,17 @@ class _AnimatedHoldingRowState extends State<_AnimatedHoldingRow> {
                         Row(
                           children: [
                             Text(
-                              '${widget.holding.totalQuantity} qty',
+                              '${widget.holding.totalQuantity.toStringAsFixed(0)} qty',
                               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                 color: DesignTokens.textMediumContrast,
                               ),
                             ),
                             const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: DesignTokens.graphiteSurface,
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                'Allocation pending',
-                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                  fontSize: 10,
-                                ),
+                            Text(
+                              '@ ${CurrencyFormatter.format(widget.holding.averagePrice, showDecimals: true)}',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: DesignTokens.textMediumContrast,
+                                fontSize: 11,
                               ),
                             ),
                           ],
@@ -172,7 +166,7 @@ class _AnimatedHoldingRowState extends State<_AnimatedHoldingRow> {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text(
-                        CurrencyFormatter.format(widget.holding.investedValue),
+                        CurrencyFormatter.format(widget.holding.investedValue, showDecimals: true),
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       const SizedBox(height: 4),

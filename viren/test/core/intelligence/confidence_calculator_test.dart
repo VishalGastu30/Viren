@@ -133,6 +133,7 @@ Trade _mockTrade(String id, DateTime ts) {
     broker: 'Mock',
     currency: 'INR',
     source: TradeSource.manual,
+    status: TradeStatus.confirmed,
     parseConfidence: 100,
     createdAt: DateTime.now(),
     updatedAt: DateTime.now(),

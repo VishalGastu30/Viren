@@ -1,0 +1,11 @@
+-keep class com.google.auto.value.** { *; }
+-dontwarn com.google.auto.value.**
+-keep class autovalue.shaded.com.squareup.javapoet.** { *; }
+-dontwarn autovalue.shaded.com.squareup.javapoet.**
+-dontwarn javax.lang.model.**
+-dontwarn javax.annotation.**
+-keep class com.google.mlkit.** { *; }
+-keep class com.google.mediapipe.** { *; }
+-keep class com.tom_roush.pdfbox.** { *; }
+-dontwarn com.gemalto.jp2.**
+-dontwarn com.google.mediapipe.proto.**

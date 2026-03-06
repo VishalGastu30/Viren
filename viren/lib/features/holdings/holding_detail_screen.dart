@@ -168,14 +168,14 @@ class _HoldingDetailScreenState extends ConsumerState<HoldingDetailScreen> {
                    Expanded(
                      child: _StatCard(
                        label: 'Invested', 
-                       value: CurrencyFormatter.formatCompact(widget.holding.investedValue),
+                       value: CurrencyFormatter.format(widget.holding.investedValue, showDecimals: true),
                      ),
                    ),
                    const SizedBox(width: 16),
                    Expanded(
                      child: _StatCard(
                         label: 'Current', 
-                        value: CurrencyFormatter.formatCompact(widget.holding.investedValue),
+                        value: CurrencyFormatter.format(widget.holding.investedValue, showDecimals: true),
                         isHighlight: true,
                      ),
                    ),
@@ -187,18 +187,21 @@ class _HoldingDetailScreenState extends ConsumerState<HoldingDetailScreen> {
                    Expanded(
                      child: _StatCard(
                        label: 'Avg Price', 
-                       value: CurrencyFormatter.format(widget.holding.averagePrice),
+                       value: CurrencyFormatter.format(widget.holding.averagePrice, showDecimals: true),
                      ),
                    ),
                    const SizedBox(width: 16),
                    Expanded(
                      child: _StatCard(
                         label: 'Quantity', 
-                        value: widget.holding.totalQuantity.toString(),
+                        value: widget.holding.totalQuantity.toStringAsFixed(0),
                      ),
                    ),
                  ],
                ),
+               const SizedBox(height: 16),
+               // True Cost Basis + Reconciliation Status Row
+               _TrueCostBasisSection(holding: widget.holding),
                const SizedBox(height: 32),
                
                // Investment Reason Section
@@ -441,6 +444,156 @@ class _InvestmentReasonSection extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Displays True Cost Basis, Total Charges, and Reconciliation Status for a holding.
+class _TrueCostBasisSection extends ConsumerWidget {
+  final Holding holding;
+
+  const _TrueCostBasisSection({required this.holding});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tradesAsync = ref.watch(allTradesProvider);
+
+    return tradesAsync.when(
+      data: (allTrades) {
+        final symbolTrades = allTrades
+            .where((t) => t.trade.instrumentSymbol == holding.instrumentSymbol)
+            .toList();
+
+        if (symbolTrades.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        // Aggregate charge data from trades
+        double totalBrokerage = 0;
+        double totalStt = 0;
+        double totalGst = 0;
+        double totalOtherLevies = 0;
+        double weightedTcb = 0;
+        double totalBuyQty = 0;
+        db_enums.TradeStatus worstStatus = db_enums.TradeStatus.reconciled;
+
+        for (final tw in symbolTrades) {
+          final t = tw.trade;
+          if (t.tradeType == db_enums.TradeType.buy) {
+            totalBrokerage += t.brokerage ?? 0;
+            totalStt += t.stt ?? 0;
+            totalGst += t.gst ?? 0;
+            totalOtherLevies += t.otherLevies ?? 0;
+            if (t.trueCostBasis != null) {
+              weightedTcb += t.trueCostBasis! * t.quantity;
+              totalBuyQty += t.quantity;
+            }
+          }
+
+          // Determine worst reconciliation status
+          if (t.status == db_enums.TradeStatus.discrepant) {
+            worstStatus = db_enums.TradeStatus.discrepant;
+          } else if (t.status == db_enums.TradeStatus.unconfirmed && worstStatus != db_enums.TradeStatus.discrepant) {
+            worstStatus = db_enums.TradeStatus.unconfirmed;
+          } else if (t.status == db_enums.TradeStatus.confirmed && worstStatus == db_enums.TradeStatus.reconciled) {
+            worstStatus = db_enums.TradeStatus.confirmed;
+          }
+        }
+
+        final avgTcb = totalBuyQty > 0 ? weightedTcb / totalBuyQty : 0.0;
+        final totalCharges = totalBrokerage + totalStt + totalGst + totalOtherLevies;
+        final hasChargeData = totalCharges > 0;
+
+        // Reconciliation badge
+        IconData statusIcon;
+        Color statusColor;
+        String statusLabel;
+
+        switch (worstStatus) {
+          case db_enums.TradeStatus.reconciled:
+            statusIcon = Icons.verified_rounded;
+            statusColor = DesignTokens.obsidianTeal;
+            statusLabel = 'Exchange Verified';
+            break;
+          case db_enums.TradeStatus.confirmed:
+            statusIcon = Icons.check_circle_outline_rounded;
+            statusColor = DesignTokens.obsidianTeal;
+            statusLabel = 'Confirmed';
+            break;
+          case db_enums.TradeStatus.unconfirmed:
+            statusIcon = Icons.help_outline_rounded;
+            statusColor = DesignTokens.ashGold;
+            statusLabel = 'Unreconciled';
+            break;
+          case db_enums.TradeStatus.discrepant:
+            statusIcon = Icons.error_outline_rounded;
+            statusColor = DesignTokens.crimsonWarning;
+            statusLabel = 'Discrepancy';
+            break;
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // True Cost Basis + Total Charges
+            if (hasChargeData) ...[
+              Row(
+                children: [
+                  Expanded(
+                    child: _StatCard(
+                      label: 'True Cost Basis',
+                      value: CurrencyFormatter.format(avgTcb, showDecimals: true),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _StatCard(
+                      label: 'Total Charges',
+                      value: CurrencyFormatter.format(totalCharges, showDecimals: true),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+            ],
+            // Reconciliation Status Badge
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: statusColor.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: statusColor.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                children: [
+                  Icon(statusIcon, color: statusColor, size: 20),
+                  const SizedBox(width: 10),
+                  Text(
+                    statusLabel,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: statusColor,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (hasChargeData) ...[
+                    const Spacer(),
+                    Text(
+                      'STT: ${CurrencyFormatter.format(totalStt, showDecimals: true)}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: DesignTokens.textMediumContrast,
+                        fontSize: 10,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
     );
   }
 }

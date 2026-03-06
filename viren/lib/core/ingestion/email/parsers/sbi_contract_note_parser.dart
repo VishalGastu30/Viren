@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:developer' as developer;
 
 import '../../../database/enums.dart';
@@ -25,89 +24,142 @@ class SbiContractNoteParser implements DocumentContentParser {
     int totalRowsParsed = 0;
     int totalRejectedRows = 0;
 
-    // PHASE 1: Normalize Extracted Text
-    final normalizedText = rawText.replaceAll(RegExp(r'\s+'), ' ').trim();
+    // Normalize text for regex matching
+    final normalizedText = rawText.replaceAll(RegExp(r'\s+'), ' ');
 
-    if (normalizedText.isEmpty) {
+    if (normalizedText.trim().isEmpty) {
       errors.add('Decrypted SBI CNB PDF $filename is empty.');
-      return _buildResult(trades, warnings, errors, totalRowsDetected, totalRowsParsed, totalRejectedRows);
+      return EmailParseResult(
+        messageId: 'DOCUMENT_PARSER_DELEGATE',
+        aggregateConfidence: 0,
+        warnings: warnings,
+        errors: errors,
+      );
     }
 
-    // PHASE 2: Tokenize From THE END
-    // 1: B/S | 2: Security Name | 3: Symbol | 4: Series | 5: Trade No | 6: Time | 7: Qty | 8: Price | 9: Traded Value
-    final cnPattern = RegExp(
-      r'\b(B|S)\s+(.+?)\s+([A-Z0-9\-]+)\s+([A-Z]{2})\s+(\d{15,25})\s+(\d{2}:\d{2}:\d{2}\s(?:AM|PM))\s+(\d+)\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)\b',
+    // --- ANNEXURE B: Global Charges ---
+    // We will attempt to find summary totals. Commonly formatted as trailing numbers.
+    double extractAmount(String label) {
+      final reg = RegExp(label + r'[^0-9]+([\d,]+\.\d+)', caseSensitive: false);
+      final match = reg.firstMatch(normalizedText);
+      if (match != null) {
+        return double.tryParse(match.group(1)!.replaceAll(',', '')) ?? 0.0;
+      }
+      return 0.0;
+    }
+
+    // Try to extract charges by common SBI labels
+    final brokerage = extractAmount(r'Brokerage');
+    final stt = extractAmount(r'Securities Transaction Tax');
+    final cgst = extractAmount(r'CGST');
+    final sgst = extractAmount(r'SGST');
+    final igst = extractAmount(r'IGST');
+    final gst = cgst + sgst + igst;
+    
+    final stampDuty = extractAmount(r'Stamp Duty');
+    final exchangeCharges = extractAmount(r'Exchange Transaction Charges');
+    final sebiFees = extractAmount(r'SEBI Turnover Fees');
+    final otherLevies = stampDuty + exchangeCharges + sebiFees;
+
+    final netAmountAfterLevies = extractAmount(r'Net Amount receivable|Net Amount payable');
+    
+    // --- ANNEXURE A: Trades ---
+    final annexureAPattern = RegExp(
+      r'(\d{13,20})\s+(\d{2}:\d{2}:\d{2})\s+([A-Z0-9\-]+)-Cash-\S+\s+(B|S)\s+(\d+)\s+([\d.]+)',
       caseSensitive: true,
     );
 
-    final matches = cnPattern.allMatches(normalizedText);
+    final matches = annexureAPattern.allMatches(normalizedText);
     totalRowsDetected = matches.length;
+
+    // We will apportion the global charges across the trades by transaction value to calculate True Cost Basis.
+    double totalTradeValue = 0.0;
+    final parsedRawTrades = <Map<String, dynamic>>[];
 
     for (final match in matches) {
       try {
-        final typeStr = match.group(1)!;
+        final tradeNo = match.group(1)!;
         final symbol = match.group(3)!;
-        final tradeNo = match.group(5)!;
-        final qty = double.parse(match.group(7)!);
-        final price = double.parse(match.group(8)!.replaceAll(',', ''));
+        final typeStr = match.group(4)!;
+        final qtyStr = match.group(5)!;
+        final priceStr = match.group(6)!;
 
+        final qty = double.parse(qtyStr);
+        final price = double.parse(priceStr);
         final tradeType = typeStr == 'B' ? TradeType.buy : TradeType.sell;
+        
+        final value = qty * price;
+        totalTradeValue += value;
 
-        trades.add(EmailParsedTrade(
-          symbol: symbol,
-          instrumentName: symbol,
-          exchange: 'NSE',
-          tradeType: tradeType,
-          quantity: qty,
-          pricePerUnit: price,
-          tradeDate: emailDate,
-          broker: 'SBI Securities',
-          confidence: 85, // Lower than NSE Direct, used as fallback
-          sourceMessageHash: attachmentHash,
-          tradeNo: tradeNo,
-        ));
+        parsedRawTrades.add({
+          'tradeNo': tradeNo,
+          'symbol': symbol,
+          'type': tradeType,
+          'qty': qty,
+          'price': price,
+          'value': value,
+        });
         
         totalRowsParsed++;
       } catch (e) {
         totalRejectedRows++;
-        warnings.add('Failed to extract canonical row data from normalized CNB PDF: $e');
+        warnings.add('Failed to parse SBI contract note trade: $e');
       }
     }
-    
-    if (totalRowsDetected > 0 && totalRowsParsed == 0) {
-      errors.add('Parser logic bug: Detected $totalRowsDetected rows but generated 0 trades in SBI CNB.');
+
+    // Create final EmailParsedTrade objects with apportioned charges
+    for (final raw in parsedRawTrades) {
+      final proportion = totalTradeValue > 0 ? (raw['value'] / totalTradeValue) : 0;
+      
+      final apportionedBrokerage = proportion * brokerage;
+      final apportionedStt = proportion * stt;
+      final apportionedGst = proportion * gst;
+      final apportionedOther = proportion * otherLevies;
+      
+      // Calculate true cost basis = (grossValue + totalCharges) / qty
+      // For SBI, we add charges to both buy and sell true cost basis mathematically for performance checking
+      final totalChargesForTrade = apportionedBrokerage + apportionedStt + apportionedGst + apportionedOther;
+      final trueCostBasis = (raw['value'] + totalChargesForTrade) / raw['qty'];
+
+      trades.add(EmailParsedTrade(
+        symbol: raw['symbol'],
+        instrumentName: raw['symbol'],
+        exchange: 'NSE',
+        tradeType: raw['type'],
+        quantity: raw['qty'],
+        pricePerUnit: raw['price'],
+        tradeDate: emailDate,
+        broker: 'SBI Securities',
+        confidence: 85, 
+        sourceMessageHash: attachmentHash, 
+        tradeNo: raw['tradeNo'],
+        source: TradeSource.sbiContractNote,
+        brokerage: apportionedBrokerage,
+        stt: apportionedStt,
+        gst: apportionedGst,
+        otherLevies: apportionedOther,
+        netAmountAfterLevies: proportion * netAmountAfterLevies,
+        trueCostBasis: trueCostBasis,
+      ));
     }
 
-    // REQUIRED DEBUG OUTPUT per user request
-    final debugPayload = {
-      "pdf": filename,
-      "rows_detected": totalRowsDetected,
-      "rows_parsed": totalRowsParsed,
-      "trades_created": trades.length,
-      "rejected_rows": totalRejectedRows,
-    };
-    developer.log(jsonEncode(debugPayload), name: 'SbiContractNoteParser');
-
-    return _buildResult(trades, warnings, errors, totalRowsDetected, totalRowsParsed, totalRejectedRows);
-  }
-
-  EmailParseResult _buildResult(
-    List<EmailParsedTrade> trades, 
-    List<String> warnings, 
-    List<String> errors,
-    int detected, int parsed, int rejected
-  ) {
-    int avgConfidence = trades.isEmpty ? 0 : 85;
+    developer.log(
+      '[SBI_CN_PARSER] $filename | Found ${trades.length} trades | TCB Apportioned',
+      name: 'SbiContractNoteParser',
+    );
 
     return EmailParseResult(
       messageId: 'DOCUMENT_PARSER_DELEGATE',
       trades: trades,
-      aggregateConfidence: avgConfidence,
+      aggregateConfidence: trades.isEmpty ? 0 : 85,
       warnings: warnings,
       errors: errors,
-      rowsDetected: detected,
-      rowsParsed: parsed,
-      rejectedRows: rejected,
+      rowsDetected: totalRowsDetected,
+      rowsParsed: totalRowsParsed,
+      rejectedRows: totalRejectedRows,
+      rawCandidatesDetected: 0,
+      rawCandidates: [],
+      snapshots: [],
     );
   }
 }

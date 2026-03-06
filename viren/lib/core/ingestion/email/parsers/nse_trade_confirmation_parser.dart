@@ -25,67 +25,93 @@ class NseTradeConfirmationParser implements DocumentContentParser {
     int totalRowsParsed = 0;
     int totalRejectedRows = 0;
 
-    // PHASE 1: Normalize Extracted Text
+    // 1. Normalize
+    // We intentionally keep single spaces but remove newlines/tabs so the pattern can match continuously
     final normalizedText = rawText.replaceAll(RegExp(r'\s+'), ' ').trim();
 
     if (normalizedText.isEmpty) {
-      errors.add('Decrypted NSE Direct PDF $filename is empty or missing tabular data.');
+      errors.add('Decrypted NSE Direct PDF $filename is empty.');
       return _buildResult(trades, warnings, errors, totalRowsDetected, totalRowsParsed, totalRejectedRows);
     }
 
-    // PHASE 2: Tokenize From THE END
-    // 1: B/S | 2: Security Name | 3: Symbol | 4: Series | 5: Trade No | 6: Time | 7: Qty | 8: Price | 9: Traded Value
-    final pattern = RegExp(
-      r'\b(B|S)\s+(.+?)\s+([A-Z0-9\-]+)\s+([A-Z]{2})\s+(\d{15,25})\s+(\d{2}:\d{2}:\d{2}\s(?:AM|PM))\s+(\d+)\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)\b',
+    // 2. The primary regex pattern for the specific clean row:
+    // [SYMBOL] EQ [19-digit TradeNo] [HH:MM:SS AM/PM] [Qty] [Price] [TradeValue]
+    final tradeLinePattern = RegExp(
+      r'\b([A-Z][A-Z0-9]{2,19})\s+EQ\s+(\d{15,25})\s+(\d{2}:\d{2}:\d{2}\s+(?:AM|PM))\s+(\d+)\s+([\d.]+)\s+([\d.]+)',
       caseSensitive: true,
     );
+    
+    // Pattern to search backwards for B or S
+    final bsPattern = RegExp(r'\b(B|S)\b', caseSensitive: true);
 
-    final matches = pattern.allMatches(normalizedText);
+    final matches = tradeLinePattern.allMatches(normalizedText);
     totalRowsDetected = matches.length;
 
     for (final match in matches) {
       try {
-        final typeStr = match.group(1)!;
-        final symbol = match.group(3)!;
-        final tradeNo = match.group(5)!;
-        final qty = double.parse(match.group(7)!);
-        final price = double.parse(match.group(8)!.replaceAll(',', ''));
+        final symbol = match.group(1)!;
+        final tradeNo = match.group(2)!;
+        // group 3 is time, but we don't store time right now
+        final qtyStr = match.group(4)!;
+        final priceStr = match.group(5)!;
+        final tradeValueStr = match.group(6)!;
 
-        final tradeType = typeStr == 'B' ? TradeType.buy : TradeType.sell;
+        final qty = double.parse(qtyStr);
+        final price = double.parse(priceStr);
+        final tradeValue = double.parse(tradeValueStr);
+
+        // 3. Math Validation (`qty * price ≈ tradeValue ±1%`)
+        final calculatedValue = qty * price;
+        final deviation = tradeValue == 0 
+            ? 0.0 
+            : (calculatedValue - tradeValue).abs() / tradeValue;
+
+        if (deviation > 0.01) {
+          totalRejectedRows++;
+          warnings.add('Math validation failed for $symbol (TradeNo: $tradeNo): Qty($qty) * Price($price) = $calculatedValue, but PDF says $tradeValue. Deviation: ${(deviation*100).toStringAsFixed(2)}%');
+          continue;
+        }
+
+        // 4. Find B/S for this trade by looking *backwards* from this match start
+        final textBeforeMatch = normalizedText.substring(0, match.start);
+        final bsMatches = bsPattern.allMatches(textBeforeMatch);
+        
+        TradeType tradeType = TradeType.buy; // Defaulting, but should always find one
+        if (bsMatches.isNotEmpty) {
+           final lastMatch = bsMatches.last.group(1)!;
+           tradeType = lastMatch == 'B' ? TradeType.buy : TradeType.sell;
+        } else {
+           warnings.add('Could not clearly find Buy/Sell indicator for $symbol (TradeNo: $tradeNo). Defaulting to BUY.');
+        }
 
         trades.add(EmailParsedTrade(
           symbol: symbol,
-          instrumentName: symbol, // Could use group 2, but symbol represents it cleanly
+          instrumentName: symbol,
           exchange: 'NSE',
           tradeType: tradeType,
           quantity: qty,
           pricePerUnit: price,
           tradeDate: emailDate,
           broker: 'NSE Direct',
-          confidence: 95, 
+          confidence: 80, // NSE Direct Regex Baseline
           sourceMessageHash: attachmentHash, 
           tradeNo: tradeNo,
+          source: TradeSource.nseDirect,
         ));
         
         totalRowsParsed++;
+        
       } catch (e) {
         totalRejectedRows++;
-        warnings.add('Failed to extract canonical row data from NSE Direct PDF: $e');
+        warnings.add('Failed to parse canonical row data from candidate via Regex: $e');
       }
     }
-    
-    // Debug invariant
-    if (totalRowsDetected > 0 && trades.isEmpty) {
-        errors.add('Parser logic bug: Detected $totalRowsDetected rows but generated 0 trades. Review regex targeting in Phase 2.');
-    }
 
-    // REQUIRED DEBUG OUTPUT per user request
     final debugPayload = {
       "pdf": filename,
-      "rows_detected": totalRowsDetected,
-      "rows_parsed": totalRowsParsed,
-      "trades_created": trades.length,
-      "rejected_rows": totalRejectedRows,
+      "total_tokens": normalizedText.split(' ').length,
+      "regex_trades_created": trades.length,
+      "math_rejections": totalRejectedRows,
     };
     developer.log(jsonEncode(debugPayload), name: 'NseTradeConfirmationParser');
 
@@ -98,11 +124,10 @@ class NseTradeConfirmationParser implements DocumentContentParser {
     List<String> errors,
     int detected, int parsed, int rejected
   ) {
-    // If we confidently parsed execution trades, the score is high
-    int avgConfidence = trades.isEmpty ? 0 : 95;
+    int avgConfidence = trades.isEmpty ? 0 : 80;
 
     return EmailParseResult(
-      messageId: 'DOCUMENT_PARSER_DELEGATE', // Will be overridden by orchestrator later
+      messageId: 'DOCUMENT_PARSER_DELEGATE',
       trades: trades,
       aggregateConfidence: avgConfidence,
       warnings: warnings,
@@ -110,6 +135,8 @@ class NseTradeConfirmationParser implements DocumentContentParser {
       rowsDetected: detected,
       rowsParsed: parsed,
       rejectedRows: rejected,
+      rawCandidatesDetected: 0,
+      rawCandidates: [],
     );
   }
 }

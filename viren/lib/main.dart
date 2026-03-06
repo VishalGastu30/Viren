@@ -9,6 +9,7 @@ import 'core/database/app_database.dart';
 import 'core/database/providers/database_providers.dart';
 import 'core/settings/settings_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'core/ingestion/email/background_sync_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -30,6 +31,10 @@ void main() async {
 
   // Initialize SharedPreferences
   final prefs = await SharedPreferences.getInstance();
+
+  // Initialize Background Sync (Workmanager + Notifications)
+  await BackgroundSyncService.initialize();
+  await BackgroundSyncService.registerWeeklySync();
 
   runApp(
     ProviderScope(

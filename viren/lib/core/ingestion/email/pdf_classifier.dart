@@ -29,12 +29,9 @@ class PdfClassifier {
     final normalizedText = rawText.replaceAll(RegExp(r'\s+'), ' ');
 
     if (lowerSender.contains('nse-direct@nse.co.in')) {
-      // NSE Direct gives Trade Confirmations, but check text to be sure
-      if (normalizedText.contains('Buy/Sell') && 
-          normalizedText.contains('Traded Value') && 
-          normalizedText.contains('Trade No')) {
-        return PdfDocumentType.nseTradeConfirmation;
-      }
+      // Sender-first: NSE Direct emails are ALWAYS nseTradeConfirmation
+      // regardless of text quality (text may be garbage/empty from PDFBox)
+      return PdfDocumentType.nseTradeConfirmation;
     }
 
     if (lowerSender.contains('nse_alerts@nse.co.in')) {

@@ -11,6 +11,7 @@ import 'scanner_controller.dart';
 import 'attachment_handler.dart';
 import 'pdf_classifier.dart';
 import 'document_content_parser.dart';
+import 'ai_trade_extractor.dart';
 import 'parsers/nse_trade_confirmation_parser.dart';
 import 'parsers/sbi_contract_note_parser.dart';
 import 'parsers/sbi_margin_statement_parser.dart';
@@ -171,7 +172,7 @@ class EmailImportService {
     }
 
     final scanner = ScannerController();
-    final attachmentHandler = const AttachmentHandler(); // No Vault dependency
+    final attachmentHandler = AttachmentHandler();
     final parserResults = <EmailParseResult>[];
     int decryptFailures = 0;
     final decryptErrors = <String>[];
@@ -243,12 +244,46 @@ class EmailImportService {
                 emailDate: email.date,
               );
               
+              List<EmailParsedTrade> finalTrades = List.from(parseRes.trades);
+              final warnings = List<String>.from(parseRes.warnings);
+              int finalConfidence = parseRes.aggregateConfidence;
+
+              // --- AI SEMANTIC EXTRACTION FALLBACK ---
+              // ONLY allowed for NSE Direct executions. SBI and others are strictly
+              // snapshots/reconciliation and must NEVER hit the AI extractor.
+              final isTradeDocument = docType == PdfDocumentType.nseTradeConfirmation;
+
+              if (isTradeDocument && finalTrades.isEmpty && parseRes.rawCandidates.isNotEmpty) {
+                 final aiExtractor = AiTradeExtractor();
+                 final aiTrades = <EmailParsedTrade>[];
+                 
+                 for (final candidate in parseRes.rawCandidates) {
+                     final extractedList = await aiExtractor.extractTrades(
+                       candidate: candidate,
+                       documentTypeLabel: docType.name,
+                       emailDate: email.date,
+                       sourceMessageHash: result.attachmentHash,
+                     );
+                     aiTrades.addAll(extractedList);
+                 }
+
+                 if (aiTrades.isNotEmpty) {
+                    finalTrades = aiTrades;
+                    // Calculate an aggregate confidence from the AI trades
+                    final sumConf = aiTrades.fold<int>(0, (sum, t) => sum + t.confidence);
+                    finalConfidence = (sumConf / aiTrades.length).round();
+                    warnings.add('Regex failed. Recovered ${aiTrades.length} trades via AI fallback (qwen2.5:3b).');
+                 } else {
+                    warnings.add('Regex and AI fallback both failed to extract any trades from this document.');
+                 }
+              }
+
               parserResults.add(EmailParseResult(
                 messageId: email.messageId, // Map back to original email ID
-                trades: parseRes.trades,
+                trades: finalTrades,
                 snapshots: parseRes.snapshots,
-                aggregateConfidence: parseRes.aggregateConfidence,
-                warnings: parseRes.warnings,
+                aggregateConfidence: finalConfidence,
+                warnings: warnings,
                 errors: parseRes.errors,
                 rowsDetected: parseRes.rowsDetected,
                 rowsParsed: parseRes.rowsParsed,
@@ -331,8 +366,15 @@ class EmailImportService {
             quantity: trade.quantity,
             pricePerUnit: trade.pricePerUnit,
             charges: trade.charges,
+            brokerage: trade.brokerage,
+            stt: trade.stt,
+            gst: trade.gst,
+            otherLevies: trade.otherLevies,
+            netAmountAfterLevies: trade.netAmountAfterLevies,
+            trueCostBasis: trade.trueCostBasis,
+            status: trade.status,
             broker: trade.broker,
-            source: TradeSource.email,
+            source: trade.source ?? TradeSource.email,
             sourceReference: trade.sourceMessageHash,
             parseConfidence: trade.confidence,
             tradeTimestamp: trade.tradeDate,

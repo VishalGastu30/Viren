@@ -4,6 +4,23 @@
 *.swo
 .DS_Store
 
+# Security and Credentials
+OAuth/
+.env
+.env.*
+*.pem
+*.crt
+*.pfx
+*.jks
+*.key
+secrets.json
+secrets.yaml
+
+# Large Files and Binary Assets
+*.bin
+model.bin
+
+
 # Android
 .settings/
 .project
@@ -24,4 +41,5 @@ local.properties
 service_account.json
 ios/Flutter/Generated.xcconfig
 ios/Flutter/flutter_export_environment.sh
+
 

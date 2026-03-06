@@ -17,6 +17,17 @@ enum TradeSource {
   email,
   csv,
   manual,
+  nseDirect,
+  sbiContractNote,
+  both,
+}
+
+/// The reconciliation status of a trade.
+enum TradeStatus {
+  unconfirmed,
+  confirmed,
+  reconciled,
+  discrepant,
 }
 
 /// Severity level for alerts shown to the user.

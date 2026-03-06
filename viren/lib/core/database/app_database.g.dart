@@ -129,6 +129,78 @@ class $TradesTable extends Trades with TableInfo<$TradesTable, Trade> {
     type: DriftSqlType.double,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _brokerageMeta = const VerificationMeta(
+    'brokerage',
+  );
+  @override
+  late final GeneratedColumn<double> brokerage = GeneratedColumn<double>(
+    'brokerage',
+    aliasedName,
+    true,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _sttMeta = const VerificationMeta('stt');
+  @override
+  late final GeneratedColumn<double> stt = GeneratedColumn<double>(
+    'stt',
+    aliasedName,
+    true,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _gstMeta = const VerificationMeta('gst');
+  @override
+  late final GeneratedColumn<double> gst = GeneratedColumn<double>(
+    'gst',
+    aliasedName,
+    true,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _otherLeviesMeta = const VerificationMeta(
+    'otherLevies',
+  );
+  @override
+  late final GeneratedColumn<double> otherLevies = GeneratedColumn<double>(
+    'other_levies',
+    aliasedName,
+    true,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _netAmountAfterLeviesMeta =
+      const VerificationMeta('netAmountAfterLevies');
+  @override
+  late final GeneratedColumn<double> netAmountAfterLevies =
+      GeneratedColumn<double>(
+        'net_amount_after_levies',
+        aliasedName,
+        true,
+        type: DriftSqlType.double,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _trueCostBasisMeta = const VerificationMeta(
+    'trueCostBasis',
+  );
+  @override
+  late final GeneratedColumn<double> trueCostBasis = GeneratedColumn<double>(
+    'true_cost_basis',
+    aliasedName,
+    true,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+  );
+  @override
+  late final GeneratedColumnWithTypeConverter<TradeStatus, int> status =
+      GeneratedColumn<int>(
+        'status',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: false,
+        defaultValue: const Constant(0),
+      ).withConverter<TradeStatus>($TradesTable.$converterstatus);
   static const VerificationMeta _currencyMeta = const VerificationMeta(
     'currency',
   );
@@ -243,6 +315,13 @@ class $TradesTable extends Trades with TableInfo<$TradesTable, Trade> {
     tradeTimestamp,
     broker,
     charges,
+    brokerage,
+    stt,
+    gst,
+    otherLevies,
+    netAmountAfterLevies,
+    trueCostBasis,
+    status,
     currency,
     source,
     sourceReference,
@@ -346,6 +425,51 @@ class $TradesTable extends Trades with TableInfo<$TradesTable, Trade> {
       context.handle(
         _chargesMeta,
         charges.isAcceptableOrUnknown(data['charges']!, _chargesMeta),
+      );
+    }
+    if (data.containsKey('brokerage')) {
+      context.handle(
+        _brokerageMeta,
+        brokerage.isAcceptableOrUnknown(data['brokerage']!, _brokerageMeta),
+      );
+    }
+    if (data.containsKey('stt')) {
+      context.handle(
+        _sttMeta,
+        stt.isAcceptableOrUnknown(data['stt']!, _sttMeta),
+      );
+    }
+    if (data.containsKey('gst')) {
+      context.handle(
+        _gstMeta,
+        gst.isAcceptableOrUnknown(data['gst']!, _gstMeta),
+      );
+    }
+    if (data.containsKey('other_levies')) {
+      context.handle(
+        _otherLeviesMeta,
+        otherLevies.isAcceptableOrUnknown(
+          data['other_levies']!,
+          _otherLeviesMeta,
+        ),
+      );
+    }
+    if (data.containsKey('net_amount_after_levies')) {
+      context.handle(
+        _netAmountAfterLeviesMeta,
+        netAmountAfterLevies.isAcceptableOrUnknown(
+          data['net_amount_after_levies']!,
+          _netAmountAfterLeviesMeta,
+        ),
+      );
+    }
+    if (data.containsKey('true_cost_basis')) {
+      context.handle(
+        _trueCostBasisMeta,
+        trueCostBasis.isAcceptableOrUnknown(
+          data['true_cost_basis']!,
+          _trueCostBasisMeta,
+        ),
       );
     }
     if (data.containsKey('currency')) {
@@ -460,6 +584,36 @@ class $TradesTable extends Trades with TableInfo<$TradesTable, Trade> {
         DriftSqlType.double,
         data['${effectivePrefix}charges'],
       ),
+      brokerage: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}brokerage'],
+      ),
+      stt: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}stt'],
+      ),
+      gst: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}gst'],
+      ),
+      otherLevies: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}other_levies'],
+      ),
+      netAmountAfterLevies: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}net_amount_after_levies'],
+      ),
+      trueCostBasis: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}true_cost_basis'],
+      ),
+      status: $TradesTable.$converterstatus.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}status'],
+        )!,
+      ),
       currency: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}currency'],
@@ -508,6 +662,8 @@ class $TradesTable extends Trades with TableInfo<$TradesTable, Trade> {
 
   static JsonTypeConverter2<TradeType, int, int> $convertertradeType =
       const EnumIndexConverter<TradeType>(TradeType.values);
+  static JsonTypeConverter2<TradeStatus, int, int> $converterstatus =
+      const EnumIndexConverter<TradeStatus>(TradeStatus.values);
   static JsonTypeConverter2<TradeSource, int, int> $convertersource =
       const EnumIndexConverter<TradeSource>(TradeSource.values);
 }
@@ -546,6 +702,27 @@ class Trade extends DataClass implements Insertable<Trade> {
 
   /// Brokerage + STT + other charges. Nullable when unknown.
   final double? charges;
+
+  /// Real column for brokerage charges.
+  final double? brokerage;
+
+  /// Real column for securities transaction tax (STT).
+  final double? stt;
+
+  /// Real column for goods and services tax (GST).
+  final double? gst;
+
+  /// Real column for other levies and stamp duty.
+  final double? otherLevies;
+
+  /// The net amount computed after applying all levies to the gross amount.
+  final double? netAmountAfterLevies;
+
+  /// The true cost basis calculated including all charges.
+  final double? trueCostBasis;
+
+  /// Reconciliation status.
+  final TradeStatus status;
 
   /// ISO 4217 currency code.
   final String currency;
@@ -586,6 +763,13 @@ class Trade extends DataClass implements Insertable<Trade> {
     required this.tradeTimestamp,
     required this.broker,
     this.charges,
+    this.brokerage,
+    this.stt,
+    this.gst,
+    this.otherLevies,
+    this.netAmountAfterLevies,
+    this.trueCostBasis,
+    required this.status,
     required this.currency,
     required this.source,
     this.sourceReference,
@@ -617,6 +801,29 @@ class Trade extends DataClass implements Insertable<Trade> {
     map['broker'] = Variable<String>(broker);
     if (!nullToAbsent || charges != null) {
       map['charges'] = Variable<double>(charges);
+    }
+    if (!nullToAbsent || brokerage != null) {
+      map['brokerage'] = Variable<double>(brokerage);
+    }
+    if (!nullToAbsent || stt != null) {
+      map['stt'] = Variable<double>(stt);
+    }
+    if (!nullToAbsent || gst != null) {
+      map['gst'] = Variable<double>(gst);
+    }
+    if (!nullToAbsent || otherLevies != null) {
+      map['other_levies'] = Variable<double>(otherLevies);
+    }
+    if (!nullToAbsent || netAmountAfterLevies != null) {
+      map['net_amount_after_levies'] = Variable<double>(netAmountAfterLevies);
+    }
+    if (!nullToAbsent || trueCostBasis != null) {
+      map['true_cost_basis'] = Variable<double>(trueCostBasis);
+    }
+    {
+      map['status'] = Variable<int>(
+        $TradesTable.$converterstatus.toSql(status),
+      );
     }
     map['currency'] = Variable<String>(currency);
     {
@@ -659,6 +866,21 @@ class Trade extends DataClass implements Insertable<Trade> {
       charges: charges == null && nullToAbsent
           ? const Value.absent()
           : Value(charges),
+      brokerage: brokerage == null && nullToAbsent
+          ? const Value.absent()
+          : Value(brokerage),
+      stt: stt == null && nullToAbsent ? const Value.absent() : Value(stt),
+      gst: gst == null && nullToAbsent ? const Value.absent() : Value(gst),
+      otherLevies: otherLevies == null && nullToAbsent
+          ? const Value.absent()
+          : Value(otherLevies),
+      netAmountAfterLevies: netAmountAfterLevies == null && nullToAbsent
+          ? const Value.absent()
+          : Value(netAmountAfterLevies),
+      trueCostBasis: trueCostBasis == null && nullToAbsent
+          ? const Value.absent()
+          : Value(trueCostBasis),
+      status: Value(status),
       currency: Value(currency),
       source: Value(source),
       sourceReference: sourceReference == null && nullToAbsent
@@ -698,6 +920,17 @@ class Trade extends DataClass implements Insertable<Trade> {
       tradeTimestamp: serializer.fromJson<DateTime>(json['tradeTimestamp']),
       broker: serializer.fromJson<String>(json['broker']),
       charges: serializer.fromJson<double?>(json['charges']),
+      brokerage: serializer.fromJson<double?>(json['brokerage']),
+      stt: serializer.fromJson<double?>(json['stt']),
+      gst: serializer.fromJson<double?>(json['gst']),
+      otherLevies: serializer.fromJson<double?>(json['otherLevies']),
+      netAmountAfterLevies: serializer.fromJson<double?>(
+        json['netAmountAfterLevies'],
+      ),
+      trueCostBasis: serializer.fromJson<double?>(json['trueCostBasis']),
+      status: $TradesTable.$converterstatus.fromJson(
+        serializer.fromJson<int>(json['status']),
+      ),
       currency: serializer.fromJson<String>(json['currency']),
       source: $TradesTable.$convertersource.fromJson(
         serializer.fromJson<int>(json['source']),
@@ -728,6 +961,15 @@ class Trade extends DataClass implements Insertable<Trade> {
       'tradeTimestamp': serializer.toJson<DateTime>(tradeTimestamp),
       'broker': serializer.toJson<String>(broker),
       'charges': serializer.toJson<double?>(charges),
+      'brokerage': serializer.toJson<double?>(brokerage),
+      'stt': serializer.toJson<double?>(stt),
+      'gst': serializer.toJson<double?>(gst),
+      'otherLevies': serializer.toJson<double?>(otherLevies),
+      'netAmountAfterLevies': serializer.toJson<double?>(netAmountAfterLevies),
+      'trueCostBasis': serializer.toJson<double?>(trueCostBasis),
+      'status': serializer.toJson<int>(
+        $TradesTable.$converterstatus.toJson(status),
+      ),
       'currency': serializer.toJson<String>(currency),
       'source': serializer.toJson<int>(
         $TradesTable.$convertersource.toJson(source),
@@ -754,6 +996,13 @@ class Trade extends DataClass implements Insertable<Trade> {
     DateTime? tradeTimestamp,
     String? broker,
     Value<double?> charges = const Value.absent(),
+    Value<double?> brokerage = const Value.absent(),
+    Value<double?> stt = const Value.absent(),
+    Value<double?> gst = const Value.absent(),
+    Value<double?> otherLevies = const Value.absent(),
+    Value<double?> netAmountAfterLevies = const Value.absent(),
+    Value<double?> trueCostBasis = const Value.absent(),
+    TradeStatus? status,
     String? currency,
     TradeSource? source,
     Value<String?> sourceReference = const Value.absent(),
@@ -775,6 +1024,17 @@ class Trade extends DataClass implements Insertable<Trade> {
     tradeTimestamp: tradeTimestamp ?? this.tradeTimestamp,
     broker: broker ?? this.broker,
     charges: charges.present ? charges.value : this.charges,
+    brokerage: brokerage.present ? brokerage.value : this.brokerage,
+    stt: stt.present ? stt.value : this.stt,
+    gst: gst.present ? gst.value : this.gst,
+    otherLevies: otherLevies.present ? otherLevies.value : this.otherLevies,
+    netAmountAfterLevies: netAmountAfterLevies.present
+        ? netAmountAfterLevies.value
+        : this.netAmountAfterLevies,
+    trueCostBasis: trueCostBasis.present
+        ? trueCostBasis.value
+        : this.trueCostBasis,
+    status: status ?? this.status,
     currency: currency ?? this.currency,
     source: source ?? this.source,
     sourceReference: sourceReference.present
@@ -810,6 +1070,19 @@ class Trade extends DataClass implements Insertable<Trade> {
           : this.tradeTimestamp,
       broker: data.broker.present ? data.broker.value : this.broker,
       charges: data.charges.present ? data.charges.value : this.charges,
+      brokerage: data.brokerage.present ? data.brokerage.value : this.brokerage,
+      stt: data.stt.present ? data.stt.value : this.stt,
+      gst: data.gst.present ? data.gst.value : this.gst,
+      otherLevies: data.otherLevies.present
+          ? data.otherLevies.value
+          : this.otherLevies,
+      netAmountAfterLevies: data.netAmountAfterLevies.present
+          ? data.netAmountAfterLevies.value
+          : this.netAmountAfterLevies,
+      trueCostBasis: data.trueCostBasis.present
+          ? data.trueCostBasis.value
+          : this.trueCostBasis,
+      status: data.status.present ? data.status.value : this.status,
       currency: data.currency.present ? data.currency.value : this.currency,
       source: data.source.present ? data.source.value : this.source,
       sourceReference: data.sourceReference.present
@@ -844,6 +1117,13 @@ class Trade extends DataClass implements Insertable<Trade> {
           ..write('tradeTimestamp: $tradeTimestamp, ')
           ..write('broker: $broker, ')
           ..write('charges: $charges, ')
+          ..write('brokerage: $brokerage, ')
+          ..write('stt: $stt, ')
+          ..write('gst: $gst, ')
+          ..write('otherLevies: $otherLevies, ')
+          ..write('netAmountAfterLevies: $netAmountAfterLevies, ')
+          ..write('trueCostBasis: $trueCostBasis, ')
+          ..write('status: $status, ')
           ..write('currency: $currency, ')
           ..write('source: $source, ')
           ..write('sourceReference: $sourceReference, ')
@@ -858,7 +1138,7 @@ class Trade extends DataClass implements Insertable<Trade> {
   }
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll([
     id,
     instrumentSymbol,
     instrumentName,
@@ -870,6 +1150,13 @@ class Trade extends DataClass implements Insertable<Trade> {
     tradeTimestamp,
     broker,
     charges,
+    brokerage,
+    stt,
+    gst,
+    otherLevies,
+    netAmountAfterLevies,
+    trueCostBasis,
+    status,
     currency,
     source,
     sourceReference,
@@ -879,7 +1166,7 @@ class Trade extends DataClass implements Insertable<Trade> {
     createdAt,
     updatedAt,
     tamperHash,
-  );
+  ]);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -895,6 +1182,13 @@ class Trade extends DataClass implements Insertable<Trade> {
           other.tradeTimestamp == this.tradeTimestamp &&
           other.broker == this.broker &&
           other.charges == this.charges &&
+          other.brokerage == this.brokerage &&
+          other.stt == this.stt &&
+          other.gst == this.gst &&
+          other.otherLevies == this.otherLevies &&
+          other.netAmountAfterLevies == this.netAmountAfterLevies &&
+          other.trueCostBasis == this.trueCostBasis &&
+          other.status == this.status &&
           other.currency == this.currency &&
           other.source == this.source &&
           other.sourceReference == this.sourceReference &&
@@ -918,6 +1212,13 @@ class TradesCompanion extends UpdateCompanion<Trade> {
   final Value<DateTime> tradeTimestamp;
   final Value<String> broker;
   final Value<double?> charges;
+  final Value<double?> brokerage;
+  final Value<double?> stt;
+  final Value<double?> gst;
+  final Value<double?> otherLevies;
+  final Value<double?> netAmountAfterLevies;
+  final Value<double?> trueCostBasis;
+  final Value<TradeStatus> status;
   final Value<String> currency;
   final Value<TradeSource> source;
   final Value<String?> sourceReference;
@@ -940,6 +1241,13 @@ class TradesCompanion extends UpdateCompanion<Trade> {
     this.tradeTimestamp = const Value.absent(),
     this.broker = const Value.absent(),
     this.charges = const Value.absent(),
+    this.brokerage = const Value.absent(),
+    this.stt = const Value.absent(),
+    this.gst = const Value.absent(),
+    this.otherLevies = const Value.absent(),
+    this.netAmountAfterLevies = const Value.absent(),
+    this.trueCostBasis = const Value.absent(),
+    this.status = const Value.absent(),
     this.currency = const Value.absent(),
     this.source = const Value.absent(),
     this.sourceReference = const Value.absent(),
@@ -963,6 +1271,13 @@ class TradesCompanion extends UpdateCompanion<Trade> {
     required DateTime tradeTimestamp,
     this.broker = const Value.absent(),
     this.charges = const Value.absent(),
+    this.brokerage = const Value.absent(),
+    this.stt = const Value.absent(),
+    this.gst = const Value.absent(),
+    this.otherLevies = const Value.absent(),
+    this.netAmountAfterLevies = const Value.absent(),
+    this.trueCostBasis = const Value.absent(),
+    this.status = const Value.absent(),
     this.currency = const Value.absent(),
     required TradeSource source,
     this.sourceReference = const Value.absent(),
@@ -994,6 +1309,13 @@ class TradesCompanion extends UpdateCompanion<Trade> {
     Expression<DateTime>? tradeTimestamp,
     Expression<String>? broker,
     Expression<double>? charges,
+    Expression<double>? brokerage,
+    Expression<double>? stt,
+    Expression<double>? gst,
+    Expression<double>? otherLevies,
+    Expression<double>? netAmountAfterLevies,
+    Expression<double>? trueCostBasis,
+    Expression<int>? status,
     Expression<String>? currency,
     Expression<int>? source,
     Expression<String>? sourceReference,
@@ -1017,6 +1339,14 @@ class TradesCompanion extends UpdateCompanion<Trade> {
       if (tradeTimestamp != null) 'trade_timestamp': tradeTimestamp,
       if (broker != null) 'broker': broker,
       if (charges != null) 'charges': charges,
+      if (brokerage != null) 'brokerage': brokerage,
+      if (stt != null) 'stt': stt,
+      if (gst != null) 'gst': gst,
+      if (otherLevies != null) 'other_levies': otherLevies,
+      if (netAmountAfterLevies != null)
+        'net_amount_after_levies': netAmountAfterLevies,
+      if (trueCostBasis != null) 'true_cost_basis': trueCostBasis,
+      if (status != null) 'status': status,
       if (currency != null) 'currency': currency,
       if (source != null) 'source': source,
       if (sourceReference != null) 'source_reference': sourceReference,
@@ -1042,6 +1372,13 @@ class TradesCompanion extends UpdateCompanion<Trade> {
     Value<DateTime>? tradeTimestamp,
     Value<String>? broker,
     Value<double?>? charges,
+    Value<double?>? brokerage,
+    Value<double?>? stt,
+    Value<double?>? gst,
+    Value<double?>? otherLevies,
+    Value<double?>? netAmountAfterLevies,
+    Value<double?>? trueCostBasis,
+    Value<TradeStatus>? status,
     Value<String>? currency,
     Value<TradeSource>? source,
     Value<String?>? sourceReference,
@@ -1065,6 +1402,13 @@ class TradesCompanion extends UpdateCompanion<Trade> {
       tradeTimestamp: tradeTimestamp ?? this.tradeTimestamp,
       broker: broker ?? this.broker,
       charges: charges ?? this.charges,
+      brokerage: brokerage ?? this.brokerage,
+      stt: stt ?? this.stt,
+      gst: gst ?? this.gst,
+      otherLevies: otherLevies ?? this.otherLevies,
+      netAmountAfterLevies: netAmountAfterLevies ?? this.netAmountAfterLevies,
+      trueCostBasis: trueCostBasis ?? this.trueCostBasis,
+      status: status ?? this.status,
       currency: currency ?? this.currency,
       source: source ?? this.source,
       sourceReference: sourceReference ?? this.sourceReference,
@@ -1116,6 +1460,31 @@ class TradesCompanion extends UpdateCompanion<Trade> {
     if (charges.present) {
       map['charges'] = Variable<double>(charges.value);
     }
+    if (brokerage.present) {
+      map['brokerage'] = Variable<double>(brokerage.value);
+    }
+    if (stt.present) {
+      map['stt'] = Variable<double>(stt.value);
+    }
+    if (gst.present) {
+      map['gst'] = Variable<double>(gst.value);
+    }
+    if (otherLevies.present) {
+      map['other_levies'] = Variable<double>(otherLevies.value);
+    }
+    if (netAmountAfterLevies.present) {
+      map['net_amount_after_levies'] = Variable<double>(
+        netAmountAfterLevies.value,
+      );
+    }
+    if (trueCostBasis.present) {
+      map['true_cost_basis'] = Variable<double>(trueCostBasis.value);
+    }
+    if (status.present) {
+      map['status'] = Variable<int>(
+        $TradesTable.$converterstatus.toSql(status.value),
+      );
+    }
     if (currency.present) {
       map['currency'] = Variable<String>(currency.value);
     }
@@ -1165,6 +1534,13 @@ class TradesCompanion extends UpdateCompanion<Trade> {
           ..write('tradeTimestamp: $tradeTimestamp, ')
           ..write('broker: $broker, ')
           ..write('charges: $charges, ')
+          ..write('brokerage: $brokerage, ')
+          ..write('stt: $stt, ')
+          ..write('gst: $gst, ')
+          ..write('otherLevies: $otherLevies, ')
+          ..write('netAmountAfterLevies: $netAmountAfterLevies, ')
+          ..write('trueCostBasis: $trueCostBasis, ')
+          ..write('status: $status, ')
           ..write('currency: $currency, ')
           ..write('source: $source, ')
           ..write('sourceReference: $sourceReference, ')
@@ -6508,6 +6884,13 @@ typedef $$TradesTableCreateCompanionBuilder =
       required DateTime tradeTimestamp,
       Value<String> broker,
       Value<double?> charges,
+      Value<double?> brokerage,
+      Value<double?> stt,
+      Value<double?> gst,
+      Value<double?> otherLevies,
+      Value<double?> netAmountAfterLevies,
+      Value<double?> trueCostBasis,
+      Value<TradeStatus> status,
       Value<String> currency,
       required TradeSource source,
       Value<String?> sourceReference,
@@ -6532,6 +6915,13 @@ typedef $$TradesTableUpdateCompanionBuilder =
       Value<DateTime> tradeTimestamp,
       Value<String> broker,
       Value<double?> charges,
+      Value<double?> brokerage,
+      Value<double?> stt,
+      Value<double?> gst,
+      Value<double?> otherLevies,
+      Value<double?> netAmountAfterLevies,
+      Value<double?> trueCostBasis,
+      Value<TradeStatus> status,
       Value<String> currency,
       Value<TradeSource> source,
       Value<String?> sourceReference,
@@ -6608,6 +6998,42 @@ class $$TradesTableFilterComposer
     column: $table.charges,
     builder: (column) => ColumnFilters(column),
   );
+
+  ColumnFilters<double> get brokerage => $composableBuilder(
+    column: $table.brokerage,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get stt => $composableBuilder(
+    column: $table.stt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get gst => $composableBuilder(
+    column: $table.gst,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get otherLevies => $composableBuilder(
+    column: $table.otherLevies,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get netAmountAfterLevies => $composableBuilder(
+    column: $table.netAmountAfterLevies,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get trueCostBasis => $composableBuilder(
+    column: $table.trueCostBasis,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<TradeStatus, TradeStatus, int> get status =>
+      $composableBuilder(
+        column: $table.status,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
 
   ColumnFilters<String> get currency => $composableBuilder(
     column: $table.currency,
@@ -6720,6 +7146,41 @@ class $$TradesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<double> get brokerage => $composableBuilder(
+    column: $table.brokerage,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get stt => $composableBuilder(
+    column: $table.stt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get gst => $composableBuilder(
+    column: $table.gst,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get otherLevies => $composableBuilder(
+    column: $table.otherLevies,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get netAmountAfterLevies => $composableBuilder(
+    column: $table.netAmountAfterLevies,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get trueCostBasis => $composableBuilder(
+    column: $table.trueCostBasis,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get currency => $composableBuilder(
     column: $table.currency,
     builder: (column) => ColumnOrderings(column),
@@ -6818,6 +7279,33 @@ class $$TradesTableAnnotationComposer
   GeneratedColumn<double> get charges =>
       $composableBuilder(column: $table.charges, builder: (column) => column);
 
+  GeneratedColumn<double> get brokerage =>
+      $composableBuilder(column: $table.brokerage, builder: (column) => column);
+
+  GeneratedColumn<double> get stt =>
+      $composableBuilder(column: $table.stt, builder: (column) => column);
+
+  GeneratedColumn<double> get gst =>
+      $composableBuilder(column: $table.gst, builder: (column) => column);
+
+  GeneratedColumn<double> get otherLevies => $composableBuilder(
+    column: $table.otherLevies,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get netAmountAfterLevies => $composableBuilder(
+    column: $table.netAmountAfterLevies,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get trueCostBasis => $composableBuilder(
+    column: $table.trueCostBasis,
+    builder: (column) => column,
+  );
+
+  GeneratedColumnWithTypeConverter<TradeStatus, int> get status =>
+      $composableBuilder(column: $table.status, builder: (column) => column);
+
   GeneratedColumn<String> get currency =>
       $composableBuilder(column: $table.currency, builder: (column) => column);
 
@@ -6893,6 +7381,13 @@ class $$TradesTableTableManager
                 Value<DateTime> tradeTimestamp = const Value.absent(),
                 Value<String> broker = const Value.absent(),
                 Value<double?> charges = const Value.absent(),
+                Value<double?> brokerage = const Value.absent(),
+                Value<double?> stt = const Value.absent(),
+                Value<double?> gst = const Value.absent(),
+                Value<double?> otherLevies = const Value.absent(),
+                Value<double?> netAmountAfterLevies = const Value.absent(),
+                Value<double?> trueCostBasis = const Value.absent(),
+                Value<TradeStatus> status = const Value.absent(),
                 Value<String> currency = const Value.absent(),
                 Value<TradeSource> source = const Value.absent(),
                 Value<String?> sourceReference = const Value.absent(),
@@ -6915,6 +7410,13 @@ class $$TradesTableTableManager
                 tradeTimestamp: tradeTimestamp,
                 broker: broker,
                 charges: charges,
+                brokerage: brokerage,
+                stt: stt,
+                gst: gst,
+                otherLevies: otherLevies,
+                netAmountAfterLevies: netAmountAfterLevies,
+                trueCostBasis: trueCostBasis,
+                status: status,
                 currency: currency,
                 source: source,
                 sourceReference: sourceReference,
@@ -6939,6 +7441,13 @@ class $$TradesTableTableManager
                 required DateTime tradeTimestamp,
                 Value<String> broker = const Value.absent(),
                 Value<double?> charges = const Value.absent(),
+                Value<double?> brokerage = const Value.absent(),
+                Value<double?> stt = const Value.absent(),
+                Value<double?> gst = const Value.absent(),
+                Value<double?> otherLevies = const Value.absent(),
+                Value<double?> netAmountAfterLevies = const Value.absent(),
+                Value<double?> trueCostBasis = const Value.absent(),
+                Value<TradeStatus> status = const Value.absent(),
                 Value<String> currency = const Value.absent(),
                 required TradeSource source,
                 Value<String?> sourceReference = const Value.absent(),
@@ -6961,6 +7470,13 @@ class $$TradesTableTableManager
                 tradeTimestamp: tradeTimestamp,
                 broker: broker,
                 charges: charges,
+                brokerage: brokerage,
+                stt: stt,
+                gst: gst,
+                otherLevies: otherLevies,
+                netAmountAfterLevies: netAmountAfterLevies,
+                trueCostBasis: trueCostBasis,
+                status: status,
                 currency: currency,
                 source: source,
                 sourceReference: sourceReference,

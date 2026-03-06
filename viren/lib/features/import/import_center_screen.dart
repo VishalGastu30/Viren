@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
 import 'dart:io';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../core/theme/design_tokens.dart';
 import '../../core/auth/auth_service.dart';
@@ -12,6 +13,8 @@ import '../../core/ingestion/csv_import_service.dart';
 import '../../core/database/providers/database_providers.dart';
 import '../../core/database/app_database.dart';
 import '../../core/ingestion/broker_templates.dart';
+import '../../core/ingestion/email/scanner_controller.dart';
+import '../../core/ingestion/email/attachment_handler.dart';
 import '../import/column_mapping_screen.dart';
 import '../import/manual_trade_entry_screen.dart';
 class ImportCenterScreen extends ConsumerStatefulWidget {
@@ -320,6 +323,47 @@ class _ImportCenterScreenState extends ConsumerState<ImportCenterScreen> with Si
           return;
         }
         pan = inputtedPan;
+
+        // ═══════════════════════════════════════════════════════════════════
+        // STAGE 2.5: EARLY 1-PDF PAN TEST 
+        // ═══════════════════════════════════════════════════════════════════
+        _startScanning('Verifying PAN securely...');
+        try {
+          // Find the first email with a PDF to test
+          final firstEmail = discovery.rawEmails.firstWhere((e) => e.attachments.any((a) => a.isPdf));
+          final testAttachment = firstEmail.attachments.firstWhere((a) => a.isPdf);
+          
+          final scanner = ScannerController();
+          final bytes = await scanner.downloadAttachment(
+            authService: authService,
+            messageId: firstEmail.messageId,
+            attachmentId: testAttachment.attachmentId,
+          );
+
+          final attachmentHandler = AttachmentHandler();
+          final testResult = await attachmentHandler.processPdfAttachment(
+            attachmentBytes: bytes, 
+            filename: testAttachment.filename, 
+            attachmentHash: scanner.computeAttachmentHash(bytes), 
+            pan: pan
+          );
+
+          if (!testResult.decryptionSucceeded && testResult.errorMessage != null) {
+            if (testResult.errorMessage!.contains('Incorrect PAN')) {
+                _stopScanning();
+                _showErrorSnack('Incorrect PAN. Please try again.');
+                return;
+            } else {
+                _stopScanning();
+                _showErrorSnack('This device cannot decrypt broker PDFs securely. (${testResult.errorMessage})');
+                return;
+            }
+          }
+        } catch (e) {
+             _stopScanning();
+             _showErrorSnack('Device crypto test failed: $e');
+             return;
+        }
       }
 
       // ═══════════════════════════════════════════════════════════════════
@@ -563,7 +607,12 @@ class _ImportCenterScreenState extends ConsumerState<ImportCenterScreen> with Si
                       onPressed: () {
                         final pan = panController.text.trim().toUpperCase();
                         if (pan.length == 10) {
-                          Navigator.pop(ctx, pan);
+                          const secureStorage = FlutterSecureStorage();
+                          secureStorage.write(key: 'user_pan_uppercase', value: pan).then((_) {
+                            if (ctx.mounted) {
+                              Navigator.pop(ctx, pan);
+                            }
+                          });
                         } else {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
@@ -589,7 +638,7 @@ class _ImportCenterScreenState extends ConsumerState<ImportCenterScreen> with Si
                 const SizedBox(height: 16),
                 Center(
                   child: Text(
-                    'PAN is never saved or logged.',
+                    'PAN is securely saved on-device for automated background syncs.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: DesignTokens.obsidianTeal.withValues(alpha: 0.7),
                       fontSize: 10,

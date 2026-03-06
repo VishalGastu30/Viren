@@ -8,6 +8,7 @@ import '../features/alerts/alerts_screen.dart';
 import '../features/assistant/assistant_screen.dart';
 import '../features/import/import_center_screen.dart';
 import '../features/import/manual_trade_entry_screen.dart';
+import '../features/scan/scan_progress_screen.dart';
 
 class VirenRouter extends StatefulWidget {
   const VirenRouter({super.key});
@@ -109,7 +110,7 @@ class _VirenRouterState extends State<VirenRouter> {
                          subtitle: Text('Auto-detect contract notes', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast)),
                          onTap: () {
                             Navigator.pop(ctx);
-                            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ImportCenterScreen()));
+                            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ScanProgressScreen()));
                          },
                       ),
                       const SizedBox(height: 16),

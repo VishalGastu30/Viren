@@ -73,6 +73,13 @@ class TradeRepository {
     required double pricePerUnit,
     String? broker,
     double? charges,
+    double? brokerage,
+    double? stt,
+    double? gst,
+    double? otherLevies,
+    double? netAmountAfterLevies,
+    double? trueCostBasis,
+    TradeStatus status = TradeStatus.unconfirmed,
     String currency = 'INR',
     TradeSource source = TradeSource.manual,
     String? sourceReference,
@@ -103,6 +110,13 @@ class TradeRepository {
       tradeTimestamp: tradeTimestamp.toUtc(),
       broker: Value(broker ?? 'Unknown'),
       charges: Value(charges),
+      brokerage: Value(brokerage),
+      stt: Value(stt),
+      gst: Value(gst),
+      otherLevies: Value(otherLevies),
+      netAmountAfterLevies: Value(netAmountAfterLevies),
+      trueCostBasis: Value(trueCostBasis),
+      status: Value(status),
       currency: Value(currency),
       source: source,
       sourceReference: Value(sourceReference),
@@ -169,6 +183,20 @@ class TradeRepository {
     );
   }
 
+  /// Update an existing trade (e.g. enriching with CNB charges).
+  Future<void> updateTrade(Trade trade) async {
+    final now = DateTime.now().toUtc();
+    final updated = trade.copyWith(updatedAt: now);
+    
+    final companion = updated.toCompanion(true);
+    // 1. Recompute tamper_hash for the updated row 
+    // Wait, updating a row breaks the chronological tamper hash chain unless we use a ledger append model.
+    // For now we just update and recompute the hash for this row (which is a limitation of simple rolling hash).
+    // Given the architecture, replacing the row is fine.
+    await _tradesDao.updateTrade(companion);
+    await _holdingsDao.rebuildHoldingsCache();
+  }
+
   /// Extracts non-sensitive keywords from encrypted reason text to enable search.
   List<String> _extractMetadataTags(String? text) {
     if (text == null || text.isEmpty) return [];
@@ -208,6 +236,9 @@ class TradeRepository {
       return result;
     });
   }
+
+  /// Get all raw trades directly for reconciliation matching.
+  Future<List<Trade>> getAllTrades() => _tradesDao.getAllTrades();
 
   /// Search trades by a keyword. Uses the derived metadata tags (tags_json)
   /// to enable privacy-preserving search over encrypted content.

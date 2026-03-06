@@ -11,6 +11,24 @@ import 'email_connector.dart';
 // Each parser extracts trade details with field-level confidence scores.
 // ─────────────────────────────────────────────────────────────────────────────
 
+class RawTradeCandidate {
+  final String sourcePdf;
+  final String rawText;
+  final List<String> tokenList;
+  final bool detectedBuySell;
+  final int detectedNumericTokens;
+  final int detectedSymbolLikeTokens;
+
+  RawTradeCandidate({
+    required this.sourcePdf,
+    required this.rawText,
+    required this.tokenList,
+    required this.detectedBuySell,
+    required this.detectedNumericTokens,
+    required this.detectedSymbolLikeTokens,
+  });
+}
+
 /// A single trade extracted from a broker email.
 class EmailParsedTrade {
   final String symbol;
@@ -20,12 +38,23 @@ class EmailParsedTrade {
   final double quantity;
   final double pricePerUnit;
   final double? charges;
+  
+  // Breakdown of charges from contract notes
+  final double? brokerage;
+  final double? stt;
+  final double? gst;
+  final double? otherLevies;
+  final double? netAmountAfterLevies;
+
   final DateTime tradeDate;
   final String broker;
   final int confidence; // 0–100
   final String sourceMessageHash; // SHA-256 of message body
   final List<String> warnings;
   final String? tradeNo;
+  final TradeSource? source;
+  final TradeStatus status;
+  final double? trueCostBasis;
 
   const EmailParsedTrade({
     required this.symbol,
@@ -35,13 +64,69 @@ class EmailParsedTrade {
     required this.quantity,
     required this.pricePerUnit,
     this.charges,
+    this.brokerage,
+    this.stt,
+    this.gst,
+    this.otherLevies,
+    this.netAmountAfterLevies,
     required this.tradeDate,
     required this.broker,
     required this.confidence,
     required this.sourceMessageHash,
     this.tradeNo,
+    this.source,
+    this.status = TradeStatus.unconfirmed,
+    this.trueCostBasis,
     this.warnings = const [],
   });
+
+  EmailParsedTrade copyWith({
+    String? symbol,
+    String? instrumentName,
+    String? exchange,
+    TradeType? tradeType,
+    double? quantity,
+    double? pricePerUnit,
+    double? charges,
+    double? brokerage,
+    double? stt,
+    double? gst,
+    double? otherLevies,
+    double? netAmountAfterLevies,
+    DateTime? tradeDate,
+    String? broker,
+    int? confidence,
+    String? sourceMessageHash,
+    String? tradeNo,
+    TradeSource? source,
+    TradeStatus? status,
+    double? trueCostBasis,
+    List<String>? warnings,
+  }) {
+    return EmailParsedTrade(
+      symbol: symbol ?? this.symbol,
+      instrumentName: instrumentName ?? this.instrumentName,
+      exchange: exchange ?? this.exchange,
+      tradeType: tradeType ?? this.tradeType,
+      quantity: quantity ?? this.quantity,
+      pricePerUnit: pricePerUnit ?? this.pricePerUnit,
+      charges: charges ?? this.charges,
+      brokerage: brokerage ?? this.brokerage,
+      stt: stt ?? this.stt,
+      gst: gst ?? this.gst,
+      otherLevies: otherLevies ?? this.otherLevies,
+      netAmountAfterLevies: netAmountAfterLevies ?? this.netAmountAfterLevies,
+      tradeDate: tradeDate ?? this.tradeDate,
+      broker: broker ?? this.broker,
+      confidence: confidence ?? this.confidence,
+      sourceMessageHash: sourceMessageHash ?? this.sourceMessageHash,
+      tradeNo: tradeNo ?? this.tradeNo,
+      source: source ?? this.source,
+      status: status ?? this.status,
+      trueCostBasis: trueCostBasis ?? this.trueCostBasis,
+      warnings: warnings ?? this.warnings,
+    );
+  }
 }
 
 /// A snapshot of holdings extracted from a state balance PDF (e.g. NSE Alerts).
@@ -71,6 +156,8 @@ class EmailParseResult {
   final int rowsDetected;
   final int rowsParsed;
   final int rejectedRows;
+  final int rawCandidatesDetected;
+  final List<RawTradeCandidate> rawCandidates;
 
   const EmailParseResult({
     required this.messageId,
@@ -82,6 +169,8 @@ class EmailParseResult {
     this.rowsDetected = 0,
     this.rowsParsed = 0,
     this.rejectedRows = 0,
+    this.rawCandidatesDetected = 0,
+    this.rawCandidates = const [],
   });
 
   bool get hasTrades => trades.isNotEmpty;

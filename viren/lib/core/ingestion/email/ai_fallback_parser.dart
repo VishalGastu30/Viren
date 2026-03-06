@@ -33,7 +33,7 @@ class AiFallbackParser {
   final String _ollamaHost;
 
   AiFallbackParser({
-    String model = 'mistral',
+    String model = 'qwen2.5:3b',
     String ollamaHost = 'http://localhost:11434',
   })  : _model = model,
         _ollamaHost = ollamaHost;

@@ -3,14 +3,16 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
+import 'pdf_crypto_service.dart';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // AttachmentHandler — Downloads, decrypts, and extracts text from PDF attachments.
 //
 // Security invariants:
 //   • PAN is supplied in-memory ONLY.
 //   • Raw PDF bytes are never persisted unencrypted.
-//   • Uses `pdftotext` (poppler-utils) on Linux/Desktop for text extraction.
-//   • On mobile, uses platform channel or bundled native library.
+//   • Decryption AND text extraction happen entirely inside the Kotlin Native runtime
+//     using PDFBox and MLKit.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Result of processing a single PDF attachment.
@@ -18,6 +20,7 @@ class AttachmentResult {
   final String filename;
   final String attachmentHash;
   final String extractedText;
+  final String extractionMethod;
   final bool wasPasswordProtected;
   final bool decryptionSucceeded;
   final String? errorMessage;
@@ -26,6 +29,7 @@ class AttachmentResult {
     required this.filename,
     required this.attachmentHash,
     required this.extractedText,
+    required this.extractionMethod,
     required this.wasPasswordProtected,
     required this.decryptionSucceeded,
     this.errorMessage,
@@ -35,12 +39,12 @@ class AttachmentResult {
 }
 
 class AttachmentHandler {
-  const AttachmentHandler();
+  AttachmentHandler();
 
   /// Process a downloaded PDF attachment.
   ///
-  /// 1. Saves bytes to a temp file.
-  /// 2. Attempts to extract text using the strictly in-memory PAN.
+  /// 1. Saves encrypted bytes to a temp file.
+  /// 2. Invokes PdfCryptoService (Kotlin Native) to decrypt AND extract text.
   /// 3. Cleans up temp files.
   /// 4. Returns extracted text + metadata.
   Future<AttachmentResult> processPdfAttachment({
@@ -51,18 +55,17 @@ class AttachmentHandler {
   }) async {
     final tempDir = await getTemporaryDirectory();
     final tempPdfPath = p.join(tempDir.path, 'viren_${DateTime.now().millisecondsSinceEpoch}_$filename');
-    final tempTxtPath = '$tempPdfPath.txt';
 
     try {
-      // Write PDF to temp file
+      // Write encrypted PDF to temp file
       await File(tempPdfPath).writeAsBytes(attachmentBytes);
 
-      // Rule: PDFs are ALWAYS password-protected with PAN in UPPERCASE
       if (pan.trim().isEmpty) {
         return AttachmentResult(
           filename: filename,
           attachmentHash: attachmentHash,
           extractedText: '',
+          extractionMethod: 'Unknown',
           wasPasswordProtected: true,
           decryptionSucceeded: false,
           errorMessage: 'Missing PAN. Cannot decrypt PDF broker statement.',
@@ -71,24 +74,42 @@ class AttachmentHandler {
 
       final upperPan = pan.trim().toUpperCase();
 
-      // Try with uppercase PAN as password
-      final extractedText = await _extractPdfText(tempPdfPath, tempTxtPath, password: upperPan);
-
-      if (extractedText.trim().isEmpty) {
-        return AttachmentResult(
-          filename: filename,
-          attachmentHash: attachmentHash,
-          extractedText: '',
-          wasPasswordProtected: true,
-          decryptionSucceeded: false,
-          errorMessage: 'Decryption failed: Incorrect PAN. (Expected uppercase PAN)',
+      // Kotlin handles BOTH decryption AND text extraction in one call.
+      PdfExtractionResult extractionResult;
+      try {
+        extractionResult = await PdfCryptoService.decryptAndExtract(
+          inputPath: tempPdfPath,
+          password: upperPan,
         );
+      } on PdfCryptoException catch (e) {
+        if (e.code == 'INCORRECT_PASSWORD') {
+          return AttachmentResult(
+            filename: filename,
+            attachmentHash: attachmentHash,
+            extractedText: '',
+            extractionMethod: 'Unknown',
+            wasPasswordProtected: true,
+            decryptionSucceeded: false,
+            errorMessage: 'Decryption failed: Incorrect PAN.',
+          );
+        } else {
+          return AttachmentResult(
+            filename: filename,
+            attachmentHash: attachmentHash,
+            extractedText: '',
+            extractionMethod: 'Unknown',
+            wasPasswordProtected: true,
+            decryptionSucceeded: false,
+            errorMessage: 'Native Engine Error: ${e.message}',
+          );
+        }
       }
 
       return AttachmentResult(
         filename: filename,
         attachmentHash: attachmentHash,
-        extractedText: extractedText,
+        extractedText: extractionResult.text,
+        extractionMethod: extractionResult.method,
         wasPasswordProtected: true,
         decryptionSucceeded: true,
       );
@@ -97,45 +118,14 @@ class AttachmentHandler {
         filename: filename,
         attachmentHash: attachmentHash,
         extractedText: '',
+        extractionMethod: 'Unknown',
         wasPasswordProtected: false,
         decryptionSucceeded: false,
-        errorMessage: 'PDF processing failed: $e',
+        errorMessage: 'PDF processing pipeline failed: $e',
       );
     } finally {
-      // Clean up temp files
+      // Clean up the temp encrypted PDF
       try { await File(tempPdfPath).delete(); } catch (_) {}
-      try { await File(tempTxtPath).delete(); } catch (_) {}
-    }
-  }
-
-  /// Extracts text from a PDF using pdftotext (poppler-utils).
-  ///
-  /// On Linux/Desktop: uses `pdftotext` CLI tool.
-  /// Falls back gracefully if the tool is unavailable.
-  Future<String> _extractPdfText(String pdfPath, String txtPath, {String? password}) async {
-    // Build pdftotext command
-    final args = <String>[];
-    if (password != null && password.isNotEmpty) {
-      args.addAll(['-upw', password]);
-    }
-    args.addAll(['-layout', pdfPath, txtPath]);
-
-    try {
-      final result = await Process.run('pdftotext', args);
-
-      if (result.exitCode == 0 && await File(txtPath).exists()) {
-        final text = await File(txtPath).readAsString();
-        return text.trim();
-      }
-
-      // Non-zero exit may mean wrong password or corrupted PDF
-      return '';
-    } on ProcessException catch (_) {
-      // pdftotext not installed — provide guidance
-      throw Exception(
-        'pdftotext (poppler-utils) is not installed. '
-        'Install with: sudo apt install poppler-utils',
-      );
     }
   }
 }

@@ -130,7 +130,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               Row(children: [
                 const Icon(Icons.warning_amber_rounded, color: DesignTokens.crimsonWarning),
                 const SizedBox(width: 12),
-                Text('Wipe Local Data', style: Theme.of(context).textTheme.titleLarge?.copyWith(color: DesignTokens.crimsonWarning)),
+                Expanded(
+                  child: Text('Wipe Local Data', style: Theme.of(context).textTheme.titleLarge?.copyWith(color: DesignTokens.crimsonWarning)),
+                ),
               ]),
               const SizedBox(height: 16),
               Text(
@@ -342,22 +344,69 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
             if (settings.biometricLock) ...[
               const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
-              _SettingsTile(
-                icon: Icons.timer_outlined,
-                title: 'Lock After',
-                subtitle: 'Lock the app after this much time in the background.',
-                trailing: CupertinoSlidingSegmentedControl<int>(
-                  groupValue: settings.lockTimeoutIndex,
-                  backgroundColor: DesignTokens.graphiteBase,
-                  thumbColor: DesignTokens.graphiteSurface,
-                  children: {
-                    for (int i = 0; i < _lockOptions.length; i++)
-                      i: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 6),
-                        child: Text(_lockOptions[i], style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 9)),
-                      ),
-                  },
-                  onValueChanged: (v) => settingsNotifier.setLockTimeoutIndex(v ?? 1),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: DesignTokens.obsidianTeal.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(Icons.timer_outlined,
+                              color: DesignTokens.textHighContrast, size: 20),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Lock After',
+                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                        fontWeight: FontWeight.w500,
+                                      )),
+                              const SizedBox(height: 3),
+                              Text(
+                                'Lock the app after this much time in the background.',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: DesignTokens.textMediumContrast,
+                                      height: 1.4,
+                                    ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    CupertinoSlidingSegmentedControl<int>(
+                      groupValue: settings.lockTimeoutIndex,
+                      backgroundColor: DesignTokens.graphiteBase,
+                      thumbColor: DesignTokens.graphiteSurface,
+                      children: {
+                        for (int i = 0; i < _lockOptions.length; i++)
+                          i: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                            child: Text(
+                              _lockOptions[i],
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(fontSize: 11),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                      },
+                      onValueChanged: (v) =>
+                          settingsNotifier.setLockTimeoutIndex(v ?? 1),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -386,6 +435,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         Text(
                           settings.alertSensitivity < 0.7 ? 'Conservative — only high-certainty signals' : settings.alertSensitivity > 1.3 ? 'Observant — all detected patterns' : 'Balanced — curated signals',
                           style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     )),
@@ -417,22 +468,68 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             ),
             const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
-            _SettingsTile(
-              icon: Icons.lightbulb_outline_rounded,
-              title: 'Insight Frequency',
-              subtitle: 'How often Viren surfaces behavioral observations.',
-              trailing: CupertinoSlidingSegmentedControl<int>(
-                groupValue: settings.insightFrequencyIndex,
-                backgroundColor: DesignTokens.graphiteBase,
-                thumbColor: DesignTokens.graphiteSurface,
-                children: {
-                  for (int i = 0; i < _insightFrequencyOptions.length; i++)
-                    i: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: Text(_insightFrequencyOptions[i], style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 10)),
-                    ),
-                },
-                onValueChanged: (v) => settingsNotifier.setInsightFrequencyIndex(v ?? 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: DesignTokens.obsidianTeal.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(Icons.lightbulb_outline_rounded,
+                            color: DesignTokens.textHighContrast, size: 20),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Insight Frequency',
+                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                      fontWeight: FontWeight.w500,
+                                    )),
+                            const SizedBox(height: 3),
+                            Text(
+                              'How often Viren surfaces behavioral observations.',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: DesignTokens.textMediumContrast,
+                                    height: 1.4,
+                                  ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  CupertinoSlidingSegmentedControl<int>(
+                    groupValue: settings.insightFrequencyIndex,
+                    backgroundColor: DesignTokens.graphiteBase,
+                    thumbColor: DesignTokens.graphiteSurface,
+                    children: {
+                      for (int i = 0; i < _insightFrequencyOptions.length; i++)
+                        i: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                          child: Text(
+                            _insightFrequencyOptions[i],
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(fontSize: 11),
+                          ),
+                        ),
+                    },
+                    onValueChanged: (v) =>
+                        settingsNotifier.setInsightFrequencyIndex(v ?? 1),
+                  ),
+                ],
               ),
             ),
             const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
@@ -478,7 +575,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         child: const Icon(Icons.speed_rounded, color: DesignTokens.textHighContrast, size: 20),
                       ),
                       const SizedBox(width: 16),
-                      Text('Animation Intensity', style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500)),
+                      Expanded(
+                        child: Text('Animation Intensity', style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500)),
+                      ),
                     ]),
                     const SizedBox(height: 12),
                     CupertinoSlidingSegmentedControl<AnimationIntensity>(
@@ -769,7 +868,10 @@ class _SettingsTile extends StatelessWidget {
                     Text(subtitle!, style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: DesignTokens.textMediumContrast,
                       height: 1.4,
-                    )),
+                    ),
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    ),
                   ],
                 ],
               ),

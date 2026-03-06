@@ -5,7 +5,7 @@ import '../../core/database/app_database.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/animations/animation_presets.dart';
 import '../../core/utils/currency_formatter.dart';
-import 'holding_detail_screen.dart';
+import 'stock_detail_screen.dart';
 
 class HoldingsListScreen extends ConsumerStatefulWidget {
   const HoldingsListScreen({super.key});
@@ -113,7 +113,7 @@ class _AnimatedHoldingRowState extends State<_AnimatedHoldingRow> {
       onTap: () {
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (context) => HoldingDetailScreen(holding: widget.holding),
+            builder: (context) => StockDetailScreen(holding: widget.holding),
           ),
         );
       },

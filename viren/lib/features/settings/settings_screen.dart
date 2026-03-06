@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/design_tokens.dart';
 import '../../core/animations/animation_presets.dart';
+import '../../core/security/biometric_service.dart';
 import '../../core/database/providers/database_providers.dart';
 import '../../core/settings/settings_provider.dart';
 import '../settings/style_guide_screen.dart';
@@ -17,6 +18,22 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  bool _biometricCapable = true;
+  final _biometricService = BiometricService();
+
+  @override
+  void initState() {
+    super.initState();
+    _checkBiometricCapability();
+  }
+
+  Future<void> _checkBiometricCapability() async {
+    final capable = await _biometricService.isDeviceBiometricCapable();
+    if (mounted) {
+      setState(() => _biometricCapable = capable);
+    }
+  }
+
   // Experience & Motion
   AnimationIntensity _intensity = AnimationPresets.intensity;
 
@@ -292,10 +309,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             _SettingsTile(
               icon: Icons.fingerprint_rounded,
               title: 'Biometric Lock',
-              subtitle: 'Require fingerprint or Face ID on app open and after background timeout. No data leaves device.',
+              subtitle: _biometricCapable 
+                  ? 'Require fingerprint or Face ID on app open and after background timeout. No data leaves device.' 
+                  : 'No biometrics configured on this device',
               trailing: CupertinoSwitch(
                 value: settings.biometricLock,
-                onChanged: (v) => settingsNotifier.setBiometricLock(v),
+                onChanged: _biometricCapable ? (value) async {
+                  final scaffoldMessenger = ScaffoldMessenger.of(context);
+                  if (value == true) {
+                    final success = await _biometricService.enableBiometricLock();
+                    if (success) {
+                      settingsNotifier.setBiometricLock(true);
+                      if (mounted) {
+                        scaffoldMessenger.showSnackBar(
+                          const SnackBar(content: Text('Biometric lock enabled')),
+                        );
+                      }
+                    } else {
+                      settingsNotifier.setBiometricLock(false);
+                    }
+                  } else {
+                    final success = await _biometricService.disableBiometricLock();
+                    if (success) {
+                      settingsNotifier.setBiometricLock(false);
+                    } else {
+                      settingsNotifier.setBiometricLock(true);
+                    }
+                  }
+                } : null,
                 activeTrackColor: DesignTokens.obsidianTeal,
               ),
             ),

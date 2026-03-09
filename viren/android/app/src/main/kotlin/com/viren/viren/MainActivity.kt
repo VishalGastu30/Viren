@@ -16,6 +16,8 @@ import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import org.json.JSONObject
 import java.io.File
@@ -23,7 +25,10 @@ import java.io.File
 class MainActivity : FlutterFragmentActivity() {
 
     private val CHANNEL = "com.viren.viren/pdf_crypto"
+
     private var llmInference: LlmInference? = null
+    private var llmModelPath: String? = null
+    private val llmMutex = Mutex()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -96,53 +101,35 @@ class MainActivity : FlutterFragmentActivity() {
                     }
                 }
 
+                "getModelPath" -> {
+                    result.success(applicationContext.filesDir.absolutePath)
+                }
+
                 "extractAiTrades" -> {
                     val promptText = call.argument<String>("promptText")
                     if (promptText == null) {
                         result.error("INVALID_ARGS", "Missing promptText.", null)
                         return@setMethodCallHandler
                     }
+                    val modelPath = call.argument<String>("modelPath")
+                    if (modelPath == null) {
+                        result.error("INVALID_ARGS", "Missing modelPath.", null)
+                        return@setMethodCallHandler
+                    }
+                    val llmFile = File(modelPath)
+                    if (!llmFile.exists()) {
+                        result.error(
+                            "MODEL_MISSING",
+                            "AI model not downloaded yet. Please set up the assistant first.",
+                            null
+                        )
+                        return@setMethodCallHandler
+                    }
+
                     CoroutineScope(Dispatchers.IO).launch {
                         try {
-                            if (llmInference == null) {
-                                val llmFile = File(
-                                    applicationContext.cacheDir,
-                                    "llm_model.bin"
-                                )
-                                if (!llmFile.exists()) {
-                                    try {
-                                        applicationContext.assets
-                                            .open("llm/model.bin")
-                                            .use { input ->
-                                                llmFile.outputStream()
-                                                    .use { output ->
-                                                        input.copyTo(output)
-                                                    }
-                                            }
-                                    } catch (e: Exception) {
-                                        CoroutineScope(Dispatchers.Main).launch {
-                                            result.error(
-                                                "MODEL_MISSING",
-                                                "MediaPipe model not found in assets/llm/model.bin",
-                                                e.message
-                                            )
-                                        }
-                                        return@launch
-                                    }
-                                }
-                                val options = LlmInference.LlmInferenceOptions
-                                    .builder()
-                                    .setModelPath(llmFile.absolutePath)
-                                    .setMaxTokens(2048)
-                                    .setTemperature(0.0f)
-                                    .build()
-                                llmInference = LlmInference.createFromOptions(
-                                    applicationContext,
-                                    options
-                                )
-                            }
-                            val response =
-                                llmInference?.generateResponse(promptText) ?: ""
+                            val inference = getOrCreateLlmInference(modelPath)
+                            val response = inference.generateResponse(promptText)
                             CoroutineScope(Dispatchers.Main).launch {
                                 result.success(response)
                             }
@@ -158,7 +145,89 @@ class MainActivity : FlutterFragmentActivity() {
                     }
                 }
 
+                "chat" -> {
+                    val prompt = call.argument<String>("prompt")
+                    if (prompt == null) {
+                        result.error("INVALID_ARGS", "Missing prompt.", null)
+                        return@setMethodCallHandler
+                    }
+                    val modelPath = call.argument<String>("modelPath")
+                    android.util.Log.d("VirenLLM", "Received modelPath: $modelPath")
+                    if (modelPath == null) {
+                        result.error("INVALID_ARGS", "Missing modelPath.", null)
+                        return@setMethodCallHandler
+                    }
+                    val llmFile = File(modelPath)
+                    android.util.Log.d(
+                        "VirenLLM",
+                        "File exists: ${llmFile.exists()}, size: ${llmFile.length()}"
+                    )
+                    if (!llmFile.exists()) {
+                        result.error(
+                            "MODEL_MISSING",
+                            "AI model not downloaded yet. Please set up the assistant first.",
+                            null
+                        )
+                        return@setMethodCallHandler
+                    }
+
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            val inference = getOrCreateLlmInference(modelPath)
+                            val response = inference.generateResponse(prompt)
+                                ?: "I could not process that."
+                            CoroutineScope(Dispatchers.Main).launch {
+                                result.success(response)
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.e("VirenLLM", "Full error", e)
+                            CoroutineScope(Dispatchers.Main).launch {
+                                result.error(
+                                    "CHAT_ERROR",
+                                    "Chat inference failed. ${e.javaClass.name}: ${e.message}",
+                                    e.cause?.toString()
+                                )
+                            }
+                        }
+                    }
+                }
+
                 else -> result.notImplemented()
+            }
+        }
+    }
+
+    private suspend fun getOrCreateLlmInference(modelPath: String): LlmInference {
+        return llmMutex.withLock {
+            if (llmInference != null && llmModelPath == modelPath) {
+                android.util.Log.d("VirenLLM", "Reusing existing LlmInference for: $modelPath")
+                llmInference!!
+            } else {
+                if (llmInference != null) {
+                    android.util.Log.d("VirenLLM", "Model path changed — rebuilding.")
+                    try { llmInference!!.close() } catch (_: Exception) { }
+                    llmInference = null
+                    llmModelPath = null
+                }
+
+                android.util.Log.d("VirenLLM", "Loading model from: $modelPath")
+
+                // Force CPU backend explicitly.
+                // The GPU delegate crashes on some devices (e.g. Motorola Android 16)
+                // with STABLEHLO_COMPOSITE op errors even though the same .task file
+                // supports both CPU and GPU. CPU inference is slower (~34 tok/s) but
+                // stable across all devices.
+                val options = LlmInference.LlmInferenceOptions.builder()
+                    .setModelPath(modelPath)
+                    .setMaxTokens(1024)
+                    .setPreferredBackend(LlmInference.Backend.CPU)
+                    .build()
+
+                val instance = LlmInference.createFromOptions(applicationContext, options)
+                llmInference = instance
+                llmModelPath = modelPath
+                android.util.Log.d("VirenLLM", "Model loaded successfully on CPU.")
+                instance
             }
         }
     }

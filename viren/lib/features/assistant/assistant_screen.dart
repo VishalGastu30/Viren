@@ -1,18 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../core/database/providers/database_providers.dart';
-import '../../core/database/enums.dart' as db_enums;
 import '../../core/theme/design_tokens.dart';
-import '../../core/intelligence/ai/data_sanitizer.dart';
-import '../../core/animations/animation_presets.dart';
-
-class ChatMessage {
-  final String text;
-  final bool isUser;
-  final bool isTyping;
-
-  ChatMessage({required this.text, required this.isUser, this.isTyping = false});
-}
+import '../../core/ai/model_download_service.dart';
+import '../../core/ai/model_setup_screen.dart';
+import 'chat_message.dart';
+import 'portfolio_context_builder.dart';
+import 'assistant_service.dart';
 
 class AssistantScreen extends ConsumerStatefulWidget {
   const AssistantScreen({super.key});
@@ -23,420 +18,781 @@ class AssistantScreen extends ConsumerStatefulWidget {
 
 class _AssistantScreenState extends ConsumerState<AssistantScreen> {
   final List<ChatMessage> _messages = [];
+  final TextEditingController _inputController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  bool _isLoading = false;
+  bool _showSuggestions = true;
+  String _portfolioContext = '';
+  bool _isModelReady = false;
+  bool _showSlideToUnlock = false;
 
   @override
   void initState() {
     super.initState();
-    _messages.add(
-      ChatMessage(
-        text: 'Viren is initializing...',
-        isUser: false,
+    _checkModelReady();
+  }
+
+  Future<void> _checkModelReady() async {
+    final ready = await ModelDownloadService.isModelReady();
+    if (mounted) {
+      if (ready) {
+        // FIX #5: on re-launch the model is already marked ready.
+        // Skip the download overlay but still verify the file exists on disk
+        // before trusting SharedPreferences. If the file was deleted, reset.
+        final fileExists = await ModelDownloadService.modelFileExists();
+        if (!fileExists) {
+          // Model file was deleted after the flag was set — reset the flag
+          // so the user is sent back through the download flow.
+          await ModelDownloadService.resetModelReady();
+          setState(() {
+            _isModelReady = false;
+            _showSlideToUnlock = false;
+          });
+          return;
+        }
+        // File confirmed present — go straight to chat, no slide-to-unlock
+        // on re-launch (intentional: slide-to-unlock is a first-launch ceremony).
+        setState(() => _isModelReady = true);
+        _loadPortfolioContext();
+      }
+      // If not ready, _isModelReady stays false → setup overlay is shown.
+    }
+  }
+
+  @override
+  void dispose() {
+    _inputController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  // FIX #6: _loadPortfolioContext is only called from two controlled places:
+  //   1. _checkModelReady (re-launch path)
+  //   2. onUnlocked callback (first-launch path after slide)
+  // No risk of double-call as these two paths are mutually exclusive.
+  Future<void> _loadPortfolioContext() async {
+    final db = ref.read(appDatabaseProvider);
+    final builder = PortfolioContextBuilder(db);
+    final context = await builder.build();
+    if (mounted) {
+      setState(() => _portfolioContext = context);
+    }
+  }
+
+  Future<void> _sendMessage(String text) async {
+    // FIX #7: guard against sending when model isn't ready or already loading
+    if (text.trim().isEmpty || _isLoading || !_isModelReady) return;
+
+    final userMsg = ChatMessage(
+      text: text.trim(),
+      isUser: true,
+      timestamp: DateTime.now(),
+    );
+
+    final virenPlaceholder = ChatMessage(
+      text: '',
+      isUser: false,
+      timestamp: DateTime.now(),
+      isStreaming: true,
+    );
+
+    setState(() {
+      _messages.add(userMsg);
+      _messages.add(virenPlaceholder);
+      _isLoading = true;
+      _showSuggestions = false;
+      _inputController.clear();
+    });
+
+    _scrollToBottom();
+
+    try {
+      final service = AssistantService();
+      final response = await service.sendMessage(
+        userMessage: text.trim(),
+        portfolioContext: _portfolioContext,
+        history: _messages.where((m) => !m.isStreaming).toList(),
+      );
+
+      // Simulate word-by-word streaming
+      final words = response.split(' ');
+      String accumulated = '';
+
+      for (final word in words) {
+        await Future.delayed(const Duration(milliseconds: 40));
+        accumulated += (accumulated.isEmpty ? '' : ' ') + word;
+        if (mounted) {
+          setState(() {
+            _messages[_messages.length - 1] =
+                virenPlaceholder.copyWith(text: accumulated, isStreaming: true);
+          });
+          _scrollToBottom();
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _messages[_messages.length - 1] =
+              virenPlaceholder.copyWith(text: response, isStreaming: false);
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('ASSISTANT ERROR: $e');
+      if (mounted) {
+        setState(() {
+          _messages[_messages.length - 1] = virenPlaceholder.copyWith(
+            text: 'Something interrupted the response. Please try again.',
+            isStreaming: false,
+          );
+          _isLoading = false;
+        });
+      }
+    }
+
+    _scrollToBottom();
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        // Layer 1 — always present: the real chat UI
+        _buildChatScreen(),
+
+        // Layer 2 — setup overlay: only shown when model not ready
+        if (!_isModelReady && !_showSlideToUnlock)
+          _buildSetupOverlay(),
+
+        // Layer 3 — slide to unlock: shown after setup completes
+        if (_showSlideToUnlock)
+          _buildSlideToUnlock(),
+      ],
+    );
+  }
+
+  Widget _buildSetupOverlay() {
+    return Positioned.fill(
+      child: PopScope(
+        canPop: false,
+        child: Material(
+          color: DesignTokens.graphiteBase,
+          child: ModelSetupScreen(
+            onComplete: () {
+              if (mounted) {
+                setState(() {
+                  _showSlideToUnlock = true;
+                });
+              }
+            },
+          ),
+        ),
       ),
     );
   }
 
-  bool _isTyping = false;
+  Widget _buildSlideToUnlock() {
+    return Positioned.fill(
+      child: PopScope(
+        canPop: false,
+        child: Material(
+          color: DesignTokens.graphiteBase,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  color: DesignTokens.obsidianTeal.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: DesignTokens.obsidianTeal.withValues(alpha: 0.3),
+                    width: 1.5,
+                  ),
+                ),
+                child: const Icon(
+                  Icons.bolt_rounded,
+                  color: DesignTokens.obsidianTeal,
+                  size: 36,
+                ),
+              ),
+              const SizedBox(height: 28),
+              Text(
+                'Viren is ready',
+                style: TextStyle(
+                  color: DesignTokens.textHighContrast,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w300,
+                  letterSpacing: 2,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Your portfolio context is loaded',
+                style: TextStyle(
+                  color: DesignTokens.textMediumContrast,
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(height: 64),
+              _SlideToUnlockBar(
+                onUnlocked: () async {
+                  if (mounted) {
+                    // FIX #3 (coordinated with model_setup_screen fix):
+                    // markModelReady() is called HERE — after the user confirms
+                    // via slide — not inside ModelSetupScreen before onComplete.
+                    // This is the single authoritative place it is written.
+                    await ModelDownloadService.markModelReady();
+                    if (mounted) {
+                      setState(() {
+                        _showSlideToUnlock = false;
+                        _isModelReady = true;
+                      });
+                      // FIX #6: only one call site for _loadPortfolioContext
+                      // on first launch (re-launch calls it from _checkModelReady)
+                      _loadPortfolioContext();
+                    }
+                  }
+                },
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'slide to begin',
+                style: TextStyle(
+                  color: DesignTokens.textMediumContrast.withValues(alpha: 0.4),
+                  fontSize: 11,
+                  letterSpacing: 1.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
-  void _handleSuggestionTap(String label, String actionType) async {
-    if (_isTyping) return;
+  Widget _buildChatScreen() {
+    return Scaffold(
+      backgroundColor: DesignTokens.graphiteBase,
+      appBar: _buildAppBar(),
+      body: Column(
+        children: [
+          Expanded(
+            child: _messages.isEmpty
+                ? _buildEmptyState()
+                : _buildMessageList(),
+          ),
+          if (_showSuggestions && _messages.isEmpty) _buildSuggestions(),
+          _buildInputBar(),
+        ],
+      ),
+    );
+  }
 
-    setState(() {
-      _messages.insert(0, ChatMessage(text: label, isUser: true));
-      _isTyping = true;
-    });
+  AppBar _buildAppBar() {
+    return AppBar(
+      backgroundColor: DesignTokens.graphiteBase,
+      elevation: 0,
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Viren', style: Theme.of(context).textTheme.titleLarge),
+          Text('Private. Local. Yours.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: DesignTokens.textMediumContrast,
+                    fontSize: 11,
+                  )),
+        ],
+      ),
+      actions: [
+        if (_messages.isNotEmpty)
+          IconButton(
+            icon: const Icon(Icons.delete_outline_rounded,
+                color: DesignTokens.textMediumContrast, size: 20),
+            onPressed: () => setState(() {
+              _messages.clear();
+              _showSuggestions = true;
+            }),
+          ),
+      ],
+    );
+  }
 
-    if (!mounted) return;
-    setState(() {
-      _messages.insert(0, ChatMessage(text: '...', isUser: false, isTyping: true));
-    });
+  Widget _buildEmptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(40),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: DesignTokens.obsidianTeal.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.bolt_rounded,
+                  color: DesignTokens.obsidianTeal, size: 32),
+            ),
+            const SizedBox(height: 20),
+            Text('Ask me anything about your portfolio.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text(
+              'I know your holdings, trades, costs, and patterns.\nEverything stays on your device.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: DesignTokens.textMediumContrast,
+                    height: 1.6,
+                  ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-    try {
-      final aiProvider = ref.read(aiProviderProvider);
-      final String answer;
+  Widget _buildSuggestions() {
+    final suggestions = _buildDynamicSuggestions();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: suggestions
+            .map((s) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: GestureDetector(
+                    onTap: () => _sendMessage(s),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: DesignTokens.graphiteSurface,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                            color: DesignTokens.obsidianTeal
+                                .withValues(alpha: 0.2)),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(s,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(
+                                      color: DesignTokens.textHighContrast,
+                                    )),
+                          ),
+                          const Icon(Icons.arrow_forward_ios_rounded,
+                              size: 12, color: DesignTokens.obsidianTeal),
+                        ],
+                      ),
+                    ),
+                  ),
+                ))
+            .toList(),
+      ),
+    );
+  }
 
-      if (actionType == 'summarize') {
-        final holdings = await ref.read(holdingsStreamProvider.future);
-        final score = await ref.read(confidenceScoreProvider.future);
+  List<String> _buildDynamicSuggestions() {
+    final suggestions = <String>[];
+    if (_portfolioContext.contains('Holdings:') &&
+        _portfolioContext.contains('units')) {
+      suggestions.add("What's my total return so far?");
+      suggestions.add('Which holding is performing best?');
+      suggestions.add('How much have I paid in charges?');
+    } else {
+      suggestions.add('How do I get started?');
+      suggestions.add('What can you tell me?');
+      suggestions.add('Summarize my portfolio.');
+    }
+    return suggestions.take(3).toList();
+  }
 
-        final sanitizedData = DataSanitizer.sanitizePortfolio(
-          holdings: holdings,
-          confidenceScore: score?.strategyAdherence ?? 0.0,
-          timeRange: 'All Time',
-        );
-        final response = await aiProvider.summarize(sanitizedData);
-        answer = response.content;
-      } else if (actionType == 'reflect') {
-        final tradesList = await ref.read(allTradesProvider.future);
-        final trades = tradesList.map((t) => t.trade).toList();
-        final metrics = await ref.read(behaviorDaoProvider).watchAllMetrics().first;
-        final score = await ref.read(confidenceScoreProvider.future);
-        
-        final sanitizedData = DataSanitizer.sanitizeBehavior(metrics, score, trades);
-        final response = await aiProvider.reflect(sanitizedData);
-        answer = response.content;
-      } else {
-        answer = "I'm sorry, I don't know how to do that.";
-      }
+  Widget _buildMessageList() {
+    return ListView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      itemCount: _messages.length,
+      itemBuilder: (context, index) {
+        final msg = _messages[index];
+        return _ChatBubble(message: msg);
+      },
+    );
+  }
 
-      if (!mounted) return;
-      setState(() {
-        _messages.removeAt(0); // Remove typing indicator
-        _messages.insert(0, ChatMessage(text: answer, isUser: false));
-        _isTyping = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _messages.removeAt(0);
-        _messages.insert(0, ChatMessage(text: 'I am currently unable to process that. Please ensure you have data available and Ollama is running. Error: $e', isUser: false));
-        _isTyping = false;
+  Widget _buildInputBar() {
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+          16, 12, 16, MediaQuery.of(context).padding.bottom + 12),
+      decoration: BoxDecoration(
+        color: DesignTokens.graphiteSurface,
+        border: Border(
+            top: BorderSide(color: Colors.white.withValues(alpha: 0.05))),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                color: DesignTokens.graphiteBase,
+                borderRadius: BorderRadius.circular(24),
+                border:
+                    Border.all(color: Colors.white.withValues(alpha: 0.08)),
+              ),
+              child: TextField(
+                controller: _inputController,
+                style: Theme.of(context).textTheme.bodyMedium,
+                maxLines: 4,
+                minLines: 1,
+                textCapitalization: TextCapitalization.sentences,
+                // FIX #7: input bar is disabled until model is ready
+                enabled: _isModelReady,
+                decoration: InputDecoration(
+                  hintText: _isModelReady
+                      ? 'Ask Viren anything...'
+                      : 'Setting up Viren...',
+                  hintStyle:
+                      Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: DesignTokens.textMediumContrast
+                                .withValues(alpha: 0.5),
+                          ),
+                  border: InputBorder.none,
+                  contentPadding:
+                      const EdgeInsets.symmetric(vertical: 12),
+                ),
+                onSubmitted: (v) => _sendMessage(v),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          GestureDetector(
+            // FIX #7: send button also gated on _isModelReady
+            onTap: _isModelReady
+                ? () => _sendMessage(_inputController.text)
+                : null,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: (!_isModelReady || _isLoading)
+                    ? DesignTokens.obsidianTeal.withValues(alpha: 0.4)
+                    : DesignTokens.obsidianTeal,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                _isLoading
+                    ? Icons.hourglass_top_rounded
+                    : Icons.arrow_upward_rounded,
+                color: DesignTokens.graphiteBase,
+                size: 20,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Chat Bubble ──────────────────────────────────────────────────────────────
+
+class _ChatBubble extends StatelessWidget {
+  final ChatMessage message;
+  const _ChatBubble({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Align(
+        alignment:
+            message.isUser ? Alignment.centerRight : Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.80,
+          ),
+          child: message.isUser
+              ? _UserBubble(text: message.text)
+              : _VirenBubble(message: message),
+        ),
+      ),
+    );
+  }
+}
+
+class _UserBubble extends StatelessWidget {
+  final String text;
+  const _UserBubble({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      decoration: BoxDecoration(
+        color: DesignTokens.obsidianTeal.withValues(alpha: 0.15),
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(20),
+          topRight: Radius.circular(20),
+          bottomLeft: Radius.circular(20),
+          bottomRight: Radius.circular(4),
+        ),
+        border: Border.all(
+            color: DesignTokens.obsidianTeal.withValues(alpha: 0.3)),
+      ),
+      child: Text(text,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: DesignTokens.textHighContrast,
+              )),
+    );
+  }
+}
+
+class _VirenBubble extends StatelessWidget {
+  final ChatMessage message;
+  const _VirenBubble({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 6),
+          child: Text('VIREN',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: DesignTokens.obsidianTeal,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.5,
+                  )),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+          decoration: BoxDecoration(
+            color: DesignTokens.graphiteSurface,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(4),
+              topRight: Radius.circular(20),
+              bottomLeft: Radius.circular(20),
+              bottomRight: Radius.circular(20),
+            ),
+            border: const Border(
+              left: BorderSide(color: Color(0x664ECDC4), width: 2),
+            ),
+          ),
+          child: message.isStreaming && message.text.isEmpty
+              ? const _TypingIndicator()
+              : Text(
+                  message.text,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: DesignTokens.textHighContrast,
+                        height: 1.6,
+                      ),
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+// ─── Typing Indicator ─────────────────────────────────────────────────────────
+
+class _TypingIndicator extends StatefulWidget {
+  const _TypingIndicator();
+
+  @override
+  State<_TypingIndicator> createState() => _TypingIndicatorState();
+}
+
+class _TypingIndicatorState extends State<_TypingIndicator>
+    with TickerProviderStateMixin {
+  late List<AnimationController> _controllers;
+  late List<Animation<double>> _anims;
+
+  @override
+  void initState() {
+    super.initState();
+    _controllers = List.generate(
+        3,
+        (i) => AnimationController(
+              vsync: this,
+              duration: const Duration(milliseconds: 600),
+            ));
+    _anims = _controllers
+        .map((c) => Tween<double>(begin: 0.3, end: 1.0)
+            .animate(CurvedAnimation(parent: c, curve: Curves.easeInOut)))
+        .toList();
+
+    for (int i = 0; i < 3; i++) {
+      Future.delayed(Duration(milliseconds: i * 200), () {
+        if (mounted) _controllers[i].repeat(reverse: true);
       });
     }
   }
 
   @override
+  void dispose() {
+    for (final c in _controllers) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: DesignTokens.graphiteBase,
-      appBar: AppBar(
-        title: Text(
-          'Assistant',
-          style: Theme.of(context).textTheme.displaySmall,
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(
+          3,
+          (i) => Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 3),
+                child: FadeTransition(
+                  opacity: _anims[i],
+                  child: Container(
+                    width: 6,
+                    height: 6,
+                    decoration: const BoxDecoration(
+                      color: DesignTokens.obsidianTeal,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+              )),
+    );
+  }
+}
+
+// ─── Slide To Unlock ──────────────────────────────────────────────────────────
+
+class _SlideToUnlockBar extends StatefulWidget {
+  final VoidCallback onUnlocked;
+  const _SlideToUnlockBar({required this.onUnlocked});
+
+  @override
+  State<_SlideToUnlockBar> createState() => _SlideToUnlockBarState();
+}
+
+class _SlideToUnlockBarState extends State<_SlideToUnlockBar> {
+  double _dragPosition = 0;
+  final double _trackWidth = 280;
+  final double _thumbSize = 56;
+  bool _unlocked = false;
+
+  double get _maxDrag => _trackWidth - _thumbSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = (_dragPosition / _maxDrag).clamp(0.0, 1.0);
+
+    return Container(
+      width: _trackWidth,
+      height: _thumbSize,
+      decoration: BoxDecoration(
+        color: DesignTokens.obsidianTeal.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(
+          color: DesignTokens.obsidianTeal.withValues(alpha: 0.3),
         ),
       ),
-      body: CustomScrollView(
-        physics: const BouncingScrollPhysics(),
-        slivers: [
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: DesignTokens.graphiteSurface,
-                  borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: const BoxDecoration(
-                            color: DesignTokens.obsidianTeal,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Viren is observant, not predictive.',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: DesignTokens.textMediumContrast,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
-                    
-                    // Suggestions
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        _ActionChip(
-                          label: 'Summarize portfolio',
-                          onTap: () => _handleSuggestionTap('Summarize portfolio', 'summarize'),
-                          isDisabled: _isTyping,
-                        ),
-                        _ActionChip(
-                          label: 'Reflect on behavior',
-                          onTap: () => _handleSuggestionTap('Reflect on behavior', 'reflect'),
-                          isDisabled: _isTyping,
-                        ),
-                      ],
-                    ),
-                    
-                    const SizedBox(height: 32),
-                    
-                    // Chat Messages 
-                    ref.watch(allTradesProvider).when(
-                      data: (trades) {
-                        final count = trades.length;
-                        final greeting = count == 0 
-                            ? 'Hello. I am Viren. I observe your trade behavior and conviction. You haven\'t recorded any trades yet. Shall we start?'
-                            : 'Hello. I have analyzed your $count recorded trade${count > 1 ? 's' : ''}. I can summarize your activity or discuss your recent conviction levels.';
-                        
-                        // Update initial message if it's the first time
-                        if (_messages.isNotEmpty && _messages.last.text == 'Viren is initializing...') {
-                          _messages.last = ChatMessage(text: greeting, isUser: false);
-                        }
-
-                        return Column(
-                          children: _messages.reversed.toList().asMap().entries.map((entry) {
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 16.0),
-                              child: _ChatBubble(
-                                message: entry.value.text,
-                                isUser: entry.value.isUser,
-                                isTyping: entry.value.isTyping,
-                                index: _messages.length - 1 - entry.key, 
-                              ),
-                            );
-                          }).toList(),
-                        );
-                      },
-                      loading: () => const Center(child: CircularProgressIndicator()),
-                      error: (_, __) => const Text('Error linking assistant to Vault.'),
-                    ),
-                  ]
-                ),
-              ),
-            ),
-          ),
-          const SliverToBoxAdapter(
-            child: Divider(
-               indent: 24,
-               endIndent: 24,
-               color: DesignTokens.graphiteSurface,
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Text(
-                'Journal Timeline',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-            ),
-          ),
-          ref.watch(allTradesProvider).when(
-            data: (trades) {
-              if (trades.isEmpty) {
-                return const SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
-                    child: Text('No journal entries yet. Your trade history will appear here.'),
+      child: Stack(
+        children: [
+          // Fill track as user slides
+          Positioned.fill(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(28),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Container(
+                  width: _thumbSize + _dragPosition,
+                  decoration: BoxDecoration(
+                    color: DesignTokens.obsidianTeal.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(28),
                   ),
-                );
-              }
-              return SliverList(
-                delegate: SliverChildBuilderDelegate(
-                   (context, index) {
-                     final trade = trades[index];
-                     final dateStr = '${trade.trade.tradeTimestamp.day}/${trade.trade.tradeTimestamp.month}/${trade.trade.tradeTimestamp.year}';
-                     
-                     return TweenAnimationBuilder<double>(
-                       tween: Tween<double>(begin: 0, end: 1),
-                       duration: AnimationPresets.durationNormal + AnimationPresets.staggerItem(index),
-                       curve: AnimationPresets.entrance,
-                       builder: (context, value, child) {
-                         return Opacity(
-                           opacity: value.clamp(0.0, 1.0),
-                           child: Transform.translate(
-                             offset: Offset(0, 20 * (1 - value) * AnimationPresets.parallaxFactor),
-                             child: child,
-                           ),
-                         );
-                       },
-                       child: Padding(
-                         padding: const EdgeInsets.only(left: 24.0, right: 24.0, bottom: 24.0),
-                         child: IntrinsicHeight(
-                           child: Row(
-                             crossAxisAlignment: CrossAxisAlignment.stretch,
-                             children: [
-                               Column(
-                                 children: [
-                                   Container(
-                                     width: 12,
-                                     height: 12,
-                                     decoration: BoxDecoration(
-                                       color: index == 0 ? DesignTokens.obsidianTeal : DesignTokens.graphiteSurface,
-                                       shape: BoxShape.circle,
-                                       border: Border.all(
-                                         color: index == 0 ? DesignTokens.obsidianTeal : DesignTokens.ashGold, 
-                                         width: 2
-                                       ),
-                                     ),
-                                   ),
-                                   if (index != trades.length -1) // rudimentary timeline line
-                                      Expanded(
-                                        child: Container(
-                                           width: 2,
-                                           color: DesignTokens.graphiteSurface,
-                                        ),
-                                      ),
-                                 ],
-                               ),
-                               const SizedBox(width: 16),
-                               Expanded(
-                                 child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          Text(
-                                            dateStr,
-                                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                              color: index == 0 ? DesignTokens.obsidianTeal : DesignTokens.ashGold,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                          Container(
-                                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                             decoration: BoxDecoration(
-                                               color: index == 0 ? DesignTokens.obsidianTeal.withValues(alpha: 0.1) : DesignTokens.graphiteSurface,
-                                               borderRadius: BorderRadius.circular(12),
-                                             ),
-                                             child: Text(
-                                               trade.trade.tradeType == db_enums.TradeType.buy ? 'INVESTMENT' : 'EXIT',
-                                               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                                  fontSize: 10,
-                                                  color: index == 0 ? DesignTokens.obsidianTeal : DesignTokens.textMediumContrast,
-                                               ),
-                                             ),
-                                          )
-                                        ],
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        'You ${trade.trade.tradeType == db_enums.TradeType.buy ? 'bought' : 'sold'} ${trade.trade.quantity} shares of ${trade.trade.instrumentSymbol} at ₹${trade.trade.pricePerUnit.toStringAsFixed(2)}',
-                                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                          height: 1.5,
-                                          color: index == 0 ? DesignTokens.textHighContrast : DesignTokens.textMediumContrast,
-                                        ),
-                                      ),
-                                      if (trade.reasonText != null && trade.reasonText!.isNotEmpty) ...[
-                                        const SizedBox(height: 8),
-                                        Text(
-                                          'Reason: ${trade.reasonText}',
-                                          style: Theme.of(context).textTheme.bodySmall?.copyWith(fontStyle: FontStyle.italic),
-                                        ),
-                                      ],
-                                      const SizedBox(height: 12),
-                                    ],
-                                 ),
-                               ),
-                             ],
-                           ),
-                         ),
-                       ),
-                     );
-                   },
-                  childCount: trades.length,
                 ),
-              );
-            },
-            loading: () => const SliverToBoxAdapter(child: Center(child: CircularProgressIndicator())),
-            error: (_, __) => const SliverToBoxAdapter(child: Text('Error loading journal')),
+              ),
+            ),
           ),
-          const SliverToBoxAdapter(
-            child: SizedBox(height: 80),
+          // Label fades as thumb moves right
+          Center(
+            child: Opacity(
+              opacity: (1 - progress * 2).clamp(0.0, 1.0),
+              child: const Text(
+                '›  ›  ›',
+                style: TextStyle(
+                  color: DesignTokens.obsidianTeal,
+                  fontSize: 18,
+                  letterSpacing: 6,
+                ),
+              ),
+            ),
+          ),
+          // Draggable thumb
+          Positioned(
+            left: _dragPosition,
+            top: 0,
+            child: GestureDetector(
+              onHorizontalDragUpdate: (details) {
+                if (_unlocked) return;
+                setState(() {
+                  _dragPosition = (_dragPosition + details.delta.dx)
+                      .clamp(0.0, _maxDrag);
+                });
+                if (_dragPosition >= _maxDrag) {
+                  setState(() => _unlocked = true);
+                  Future.delayed(
+                    const Duration(milliseconds: 300),
+                    widget.onUnlocked,
+                  );
+                }
+              },
+              onHorizontalDragEnd: (_) {
+                if (!_unlocked) {
+                  setState(() => _dragPosition = 0);
+                }
+              },
+              child: Container(
+                width: _thumbSize,
+                height: _thumbSize,
+                decoration: BoxDecoration(
+                  color: DesignTokens.obsidianTeal,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: DesignTokens.obsidianTeal.withValues(alpha: 0.4),
+                      blurRadius: 12,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Colors.black,
+                  size: 28,
+                ),
+              ),
+            ),
           ),
         ],
-      )
-    );
-  }
-}
-
-class _ActionChip extends StatelessWidget {
-  final String label;
-  final VoidCallback onTap;
-  final bool isDisabled;
-
-  const _ActionChip({required this.label, required this.onTap, required this.isDisabled});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: isDisabled ? null : onTap,
-      child: AnimatedContainer(
-        duration: AnimationPresets.durationFast,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: isDisabled ? DesignTokens.graphiteBase : DesignTokens.graphiteSurface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: isDisabled ? DesignTokens.graphiteSurface : DesignTokens.borderSubtle),
-        ),
-        child: Text(
-          label,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: isDisabled ? DesignTokens.textMediumContrast.withValues(alpha: 0.5) : DesignTokens.textMediumContrast,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ChatBubble extends StatelessWidget {
-  final String message;
-  final bool isUser;
-  final bool isTyping;
-  final int index;
-
-  const _ChatBubble({
-    required this.message,
-    required this.isUser,
-    this.isTyping = false,
-    required this.index,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return TweenAnimationBuilder<double>(
-      tween: Tween<double>(begin: 0, end: 1),
-      duration: AnimationPresets.durationFast,
-      curve: AnimationPresets.entrance,
-      builder: (context, value, child) {
-        return Opacity(
-          opacity: value.clamp(0.0, 1.0),
-          child: Transform.translate(
-            offset: Offset(isUser ? 10 * (1 - value) : -10 * (1 - value), 0),
-            child: child,
-          ),
-        );
-      },
-      child: Align(
-        alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.7,
-          ),
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: isUser ? DesignTokens.obsidianTeal.withValues(alpha: 0.1) : DesignTokens.graphiteBase,
-              borderRadius: BorderRadius.only(
-                topLeft: const Radius.circular(20),
-                topRight: const Radius.circular(20),
-                bottomLeft: Radius.circular(isUser ? 20 : 0),
-                bottomRight: Radius.circular(isUser ? 0 : 20),
-              ),
-              border: Border.all(
-                color: isUser ? DesignTokens.obsidianTeal.withValues(alpha: 0.3) : DesignTokens.graphiteSurface,
-              ),
-            ),
-            child: isTyping
-                ? const SizedBox(
-                    width: 40,
-                    height: 20,
-                    child: Center(
-                      child: Text('...', style: TextStyle(color: DesignTokens.obsidianTeal, fontSize: 20, height: 0.5)),
-                    ),
-                  )
-                : Text(
-                    message,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: isUser ? DesignTokens.obsidianTeal : DesignTokens.textHighContrast,
-                      height: 1.5,
-                    ),
-                  ),
-          ),
-        ),
       ),
     );
   }

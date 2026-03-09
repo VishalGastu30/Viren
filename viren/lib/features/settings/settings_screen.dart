@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/ai/model_download_service.dart';
+import '../../core/ai/model_setup_screen.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/animations/animation_presets.dart';
 import '../../core/security/biometric_service.dart';
@@ -410,6 +412,87 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
               ),
             ],
+            const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
+            _SettingsTile(
+              icon: Icons.smart_toy_outlined,
+              title: 'Viren AI Model',
+              subtitle: 'Re-download the local AI model if the assistant stops working.',
+              onTap: () async {
+                final ready = await ModelDownloadService.isModelReady();
+                if (!context.mounted) return;
+                showDialog(
+                  context: context,
+                  builder: (ctx) => Dialog(
+                    backgroundColor: DesignTokens.graphiteSurface,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(24)),
+                    child: Padding(
+                      padding: const EdgeInsets.all(28),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            ready ? 'AI Model Installed' : 'AI Model Not Found',
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            ready
+                                ? 'Gemma 3 4B is installed and working. Re-download only if the assistant is behaving unexpectedly.'
+                                : 'The AI model has not been downloaded yet. Download it to use the assistant.',
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: DesignTokens.textMediumContrast,
+                              height: 1.5,
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: () async {
+                                Navigator.pop(ctx);
+                                if (ready) {
+                                  await ModelDownloadService.deleteModel();
+                                }
+                                if (!context.mounted) return;
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => ModelSetupScreen(
+                                      onComplete: () => Navigator.pop(context),
+                                    ),
+                                  ),
+                                );
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: DesignTokens.obsidianTeal,
+                                foregroundColor: DesignTokens.graphiteBase,
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14)),
+                              ),
+                              child: Text(ready ? 'Re-download Model' : 'Download Model'),
+                            ),
+                          ),
+                          if (ready) ...[
+                            const SizedBox(height: 8),
+                            SizedBox(
+                              width: double.infinity,
+                              child: TextButton(
+                                onPressed: () => Navigator.pop(ctx),
+                                child: const Text('Cancel'),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
           ]),
 
           // ─── Intelligence Controls ────────────────────────────────

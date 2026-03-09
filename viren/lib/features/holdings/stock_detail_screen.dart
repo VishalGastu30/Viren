@@ -268,7 +268,7 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
             ),
             const SizedBox(width: 8),
             Text(
-              '(${changePrefix}${q.dayChangePercent.toStringAsFixed(2)}%)',
+              '($changePrefix${q.dayChangePercent.toStringAsFixed(2)}%)',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: changeColor,
                   ),

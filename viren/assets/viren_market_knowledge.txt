@@ -1,0 +1,51 @@
+INDIAN MARKET KNOWLEDGE — VIREN REFERENCE
+
+CHARGES (per transaction):
+- STT delivery: 0.1% on buy AND sell turnover
+- STT intraday: 0.025% on sell turnover only
+- Exchange transaction charge NSE: 0.00297% of turnover
+- SEBI turnover fee: 0.0001% of turnover
+- Stamp duty: 0.015% on buy (delivery), 0.003% on buy (intraday)
+- GST: 18% on (brokerage + exchange charges + SEBI fee)
+- Brokerage: varies by broker. SBI Securities flat fee or % of turnover.
+- Total effective charge delivery trade: approximately 0.5-0.6% round trip
+
+TAXATION:
+- STCG (Short Term Capital Gain): holding < 12 months. Tax rate: 20% flat.
+- LTCG (Long Term Capital Gain): holding >= 12 months. Tax rate: 12.5% on gains above ₹1.25 lakh per year. Below ₹1.25L threshold: tax-free.
+- Tax is on REALISED gains only — unrealised (paper) gains are not taxed.
+- Grandfathering: for shares bought before 31 Jan 2018, cost basis is the higher of actual cost or 31 Jan 2018 closing price.
+- Loss harvesting: STCL can offset STCG and LTCG. LTCL can only offset LTCG.
+- Dividends: taxed as income at the investor's slab rate.
+
+SETTLEMENT:
+- India moved to T+1 settlement in Jan 2023. Shares credit next working day.
+- Intraday positions must be squared off before 3:20 PM or broker auto-squares.
+
+MARKET HOURS:
+- Pre-open session: 9:00 AM - 9:15 AM IST
+- Regular session: 9:15 AM - 3:30 PM IST (Mon-Fri)
+- Closed on NSE/BSE holidays
+
+CIRCUIT BREAKERS:
+- Individual stock: 2%, 5%, 10%, 20% upper/lower circuits depending on stock category.
+- Index circuit breaker: 10% triggers 45-min halt, 15% triggers 1hr 45min halt, 20% closes market for day.
+
+INDICES:
+- NIFTY 50: top 50 companies by free-float market cap on NSE
+- SENSEX: top 30 companies on BSE
+- NIFTY Midcap 150: ranks 101-250 by market cap
+- NIFTY Smallcap 250: ranks 251-500
+
+KEY RATIOS:
+- P/E (Price to Earnings): stock price / EPS. Lower = cheaper relative to earnings.
+- P/B (Price to Book): market price / book value per share.
+- EPS (Earnings Per Share): net profit / total shares.
+- Dividend Yield: annual dividend / current price * 100.
+- ROE (Return on Equity): net income / shareholder equity. Higher generally better.
+
+RETURN CALCULATIONS:
+- Absolute return %: ((current value - invested value) / invested value) * 100
+- XIRR: annualised return accounting for timing of cash flows. Use for multi-trade holdings.
+- Unrealised P&L: (CMP - avg cost) * quantity
+- Realised P&L: (sell price - buy price) * quantity sold, minus charges

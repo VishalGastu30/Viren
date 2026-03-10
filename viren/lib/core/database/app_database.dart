@@ -16,6 +16,8 @@ import 'tables/imports_table.dart';
 import 'tables/integrity_metadata_table.dart';
 import 'tables/column_mappings_table.dart';
 import 'tables/email_credentials_table.dart';
+import 'tables/conversations_table.dart';
+import 'tables/memory_table.dart';
 import 'daos/trades_dao.dart';
 import 'daos/holdings_dao.dart';
 import 'daos/alerts_dao.dart';
@@ -49,6 +51,9 @@ part 'app_database.g.dart';
     IntegrityMetadata,
     ColumnMappings,
     EmailCredentials,
+    Conversations,
+    ConversationMessages,
+    AssistantMemories,
   ],
   daos: [
     TradesDao,
@@ -62,7 +67,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor]) : super(executor ?? _openConnection());
 
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -116,6 +121,15 @@ class AppDatabase extends _$AppDatabase {
             // v4: Ingestion support tables
             await m.createTable(columnMappings);
             await m.createTable(emailCredentials);
+          }
+          if (from < 5) {
+            // v5: Conversation history for AI assistant
+            await m.createTable(conversations);
+            await m.createTable(conversationMessages);
+          }
+          if (from < 6) {
+            // v6: Assistant memory — compressed conversation summaries
+            await m.createTable(assistantMemories);
           }
         },
         beforeOpen: (details) async {

@@ -493,6 +493,54 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 );
               },
             ),
+            const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
+            _SettingsTile(
+              icon: Icons.memory_rounded,
+              title: 'Clear AI Memory',
+              subtitle: 'Erase all conversation summaries that Viren recalls between chats.',
+              iconColor: DesignTokens.crimsonWarning,
+              onTap: () async {
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    backgroundColor: DesignTokens.graphiteSurface,
+                    title: Text('Clear all memories?',
+                        style: TextStyle(color: DesignTokens.textHighContrast, fontSize: 16)),
+                    content: Text(
+                      'Viren will no longer recall summaries from previous conversations. This cannot be undone.',
+                      style: TextStyle(color: DesignTokens.textMediumContrast, height: 1.4),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: Text('Cancel',
+                            style: TextStyle(color: DesignTokens.textMediumContrast)),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: Text('Clear',
+                            style: TextStyle(color: DesignTokens.crimsonWarning)),
+                      ),
+                    ],
+                  ),
+                ) ?? false;
+                if (confirm) {
+                  final db = ref.read(appDatabaseProvider);
+                  await db.delete(db.assistantMemories).go();
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: const Text('AI memory cleared.'),
+                        backgroundColor: DesignTokens.obsidianTeal,
+                        behavior: SnackBarBehavior.floating,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        margin: const EdgeInsets.all(24),
+                      ),
+                    );
+                  }
+                }
+              },
+            ),
           ]),
 
           // ─── Intelligence Controls ────────────────────────────────

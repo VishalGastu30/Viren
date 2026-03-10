@@ -69,7 +69,8 @@ class _VirenRouterState extends State<VirenRouter> {
           );
         }).toList(),
       ),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: _currentIndex != 3
+          ? FloatingActionButton(
         onPressed: () {
           showModalBottomSheet(
              context: context,
@@ -124,7 +125,8 @@ class _VirenRouterState extends State<VirenRouter> {
         elevation: 0,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: const Icon(Icons.add_rounded, size: 28),
-      ),
+      )
+          : null,
       bottomNavigationBar: _MorphingBottomNav(
         currentIndex: _currentIndex,
         onTap: _onBottomNavTapped,

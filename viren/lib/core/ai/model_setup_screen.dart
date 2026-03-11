@@ -87,10 +87,12 @@ class _ModelSetupScreenState extends State<ModelSetupScreen>
         if (mounted) setState(() => _speed = s);
       },
       onSize: (r, t) {
-        if (mounted) setState(() {
-          _received = r;
-          _total = t;
-        });
+        if (mounted) {
+          setState(() {
+            _received = r;
+            _total = t;
+          });
+        }
       },
     );
 

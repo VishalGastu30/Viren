@@ -500,6 +500,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               subtitle: 'Erase all conversation summaries that Viren recalls between chats.',
               iconColor: DesignTokens.crimsonWarning,
               onTap: () async {
+                final scaffoldMessenger = ScaffoldMessenger.of(context);
                 final confirm = await showDialog<bool>(
                   context: context,
                   builder: (ctx) => AlertDialog(
@@ -528,7 +529,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   final db = ref.read(appDatabaseProvider);
                   await db.delete(db.assistantMemories).go();
                   if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
+                    scaffoldMessenger.showSnackBar(
                       SnackBar(
                         content: const Text('AI memory cleared.'),
                         backgroundColor: DesignTokens.obsidianTeal,

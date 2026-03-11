@@ -55,18 +55,10 @@ enum _BlockType { text, table, statCard, rankedList }
 
 class _Block {
   final _BlockType type;
-
-  // text block
   final String content;
-
-  // table block
   final List<String> rows;
-
-  // stat card
   final String label;
   final String value;
-
-  // ranked list
   final List<_RankedItem> items;
 
   const _Block.text(this.content)
@@ -83,7 +75,12 @@ class _Block {
         value = '',
         items = const [];
 
-
+  // ignore: unused_element
+  const _Block.statCard(this.label, this.value)
+      : type = _BlockType.statCard,
+        content = '',
+        rows = const [],
+        items = const [];
 
   const _Block.rankedList(this.items)
       : type = _BlockType.rankedList,
@@ -98,7 +95,7 @@ class _RankedItem {
   final String symbol;
   final String metric;
   final bool isPositive;
-  final double? magnitude; // 0.0 to 1.0 for bar width
+  final double? magnitude;
 
   const _RankedItem({
     required this.rank,
@@ -111,18 +108,39 @@ class _RankedItem {
 
 class _ResponseParser {
   static List<_Block> parse(String raw) {
-    final blocks = <_Block>[];
-    final lines = raw.trim().split('\n');
+    // ── Step 1: Normalise ────────────────────────────────────────────────────
+    String normalised = raw
+        .replaceAll(r'\n', '\n')
+        .replaceAll(r'\t', ' ')
+        .trim();
 
+    // Strip markdown bold (**text**) and italic (*text*) the model sometimes emits
+    normalised = normalised.replaceAll(RegExp(r'\*\*(.+?)\*\*'), r'$1');
+    normalised = normalised.replaceAll(RegExp(r'\*(.+?)\*'), r'$1');
+
+    // ── FIX 6: Strip markdown code fences ───────────────────────────────────
+    // Model sometimes outputs ```table ... ``` or ```...```
+    // Remove opening fence lines like ```table, ```markdown, ```
+    // and closing fence lines ```
+    normalised = normalised.split('\n').where((line) {
+      final t = line.trim();
+      // A fence line starts with ``` and has nothing meaningful after it
+      // (optionally followed by a language hint like "table", "markdown")
+      return !RegExp(r'^`{3}[a-zA-Z]*$').hasMatch(t);
+    }).join('\n');
+
+    final blocks = <_Block>[];
+    final lines = normalised.split('\n');
     final textBuffer = StringBuffer();
     List<String>? tableRows;
     bool inTable = false;
+    bool inMarkdownTable = false;
 
     for (int i = 0; i < lines.length; i++) {
       final line = lines[i].trim();
 
+      // ── Explicit TABLE: / END_TABLE format ──────────────────────────────
       if (line == 'TABLE:') {
-        // Flush text before table
         _flushText(textBuffer, blocks);
         tableRows = [];
         inTable = true;
@@ -143,18 +161,64 @@ class _ResponseParser {
         continue;
       }
 
+      // ── FIX 7: Stricter markdown pipe table detection ────────────────────
+      // Require at least 3 pipe-separated segments with non-empty content
+      // to avoid false positives from sentences with a stray | character.
+      final segments = line.split('|');
+      final nonEmptySegments =
+          segments.map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+      final isPipeLine = nonEmptySegments.length >= 2 &&
+          (line.startsWith('|') || line.endsWith('|') || segments.length >= 3);
+
+      // Separator row: |---|---| — skip, not data
+      final isSeparator = line.contains('-') &&
+          RegExp(r'^[\|\-\s:]+$').hasMatch(line) &&
+          line.contains('|');
+
+      if (isSeparator) {
+        continue;
+      }
+
+      if (isPipeLine) {
+        if (!inMarkdownTable) {
+          _flushText(textBuffer, blocks);
+          tableRows = [];
+          inMarkdownTable = true;
+        }
+        // Strip leading/trailing pipes then rejoin so the row is pipe-delimited
+        // ── FIX 8: Preserve empty cells as '—' ──────────────────────────────
+        final stripped = line
+            .replaceAll(RegExp(r'^\|'), '')
+            .replaceAll(RegExp(r'\|$'), '');
+        // Replace any empty cell (||) with —
+        final normalRow =
+            stripped.replaceAll(RegExp(r'\|\s*\|'), '|—|');
+        if (normalRow.trim().isNotEmpty) {
+          tableRows!.add(normalRow);
+        }
+        continue;
+      }
+
+      if (inMarkdownTable && !isPipeLine) {
+        if (tableRows != null && tableRows.isNotEmpty) {
+          blocks.add(_Block.table(tableRows));
+        }
+        tableRows = null;
+        inMarkdownTable = false;
+      }
+
       textBuffer.writeln(line);
     }
 
-    // Handle incomplete table — model ran out of tokens before END_TABLE
-    if (inTable && tableRows != null && tableRows.isNotEmpty) {
+    // Flush any incomplete table (model ran out of tokens before END_TABLE)
+    if ((inTable || inMarkdownTable) &&
+        tableRows != null &&
+        tableRows.isNotEmpty) {
       blocks.add(_Block.table(tableRows));
     }
 
-    // Flush remaining text
     _flushText(textBuffer, blocks);
 
-    // Post-process: detect stat cards and ranked lists from text blocks
     return _detectSpecialBlocks(blocks);
   }
 
@@ -166,32 +230,23 @@ class _ResponseParser {
     buffer.clear();
   }
 
-  /// Detect patterns in text blocks and convert to richer types.
   static List<_Block> _detectSpecialBlocks(List<_Block> blocks) {
     final result = <_Block>[];
-
     for (final block in blocks) {
       if (block.type != _BlockType.text) {
         result.add(block);
         continue;
       }
-
-      // Try ranked list detection
       final ranked = _tryParseRankedList(block.content);
       if (ranked != null) {
         result.add(ranked);
         continue;
       }
-
       result.add(block);
     }
-
     return result;
   }
 
-  /// Detects numbered ranking patterns like:
-  /// "1. INFY - +18.4%"
-  /// "1) TCS: +12.1%"
   static _Block? _tryParseRankedList(String text) {
     final lines = text
         .split('\n')
@@ -201,28 +256,30 @@ class _ResponseParser {
 
     if (lines.length < 2) return null;
 
-    // Must have at least 2 lines that look like ranked items
     final rankPattern = RegExp(
-        r'^(\d+)[.)]\s+([A-Z]{1,10})[\s\-:]+(.+)$',
-        caseSensitive: false);
+      r'^(\d+)[.)]\s+([A-Z]{1,10})[\s\-:]+(.+)$',
+      caseSensitive: false,
+    );
 
     final items = <_RankedItem>[];
+
+    // ── FIX 9: Don't break on first non-match — skip non-matching lines ─────
+    // OLD: used `break` which dropped everything after a non-matching line.
+    // NEW: use `continue` so stray lines (like a header sentence) are skipped.
     for (final line in lines) {
       final match = rankPattern.firstMatch(line);
-      if (match == null) break;
+      if (match == null) continue; // skip, don't break
 
       final rank = int.tryParse(match.group(1)!) ?? items.length + 1;
       final symbol = match.group(2)!.toUpperCase();
       final metric = match.group(3)!.trim();
 
-      // Extract sign and magnitude from metric
-      final isPositive = !metric.contains('-') || metric.contains('+');
+      final isPositive = !metric.startsWith('-');
       double? magnitude;
-      final pctMatch =
-          RegExp(r'(\d+\.?\d*)%').firstMatch(metric);
+      final pctMatch = RegExp(r'(\d+\.?\d*)%').firstMatch(metric);
       if (pctMatch != null) {
         final pct = double.tryParse(pctMatch.group(1)!) ?? 0;
-        magnitude = (pct / 50).clamp(0.0, 1.0); // normalise to 0-1
+        magnitude = (pct / 50).clamp(0.0, 1.0);
       }
 
       items.add(_RankedItem(
@@ -249,11 +306,16 @@ class _TableWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     if (rows.isEmpty) return const SizedBox.shrink();
 
-    final headers =
-        rows.first.split('|').map((h) => h.trim()).toList();
+    final headers = rows.first
+        .split('|')
+        .map((h) => h.trim())
+        .where((h) => h.isNotEmpty)
+        .toList();
+
+    if (headers.isEmpty) return const SizedBox.shrink();
+
     final dataRows = rows.skip(1).map((r) {
       final cells = r.split('|').map((c) => c.trim()).toList();
-      // Pad or trim to match header count
       while (cells.length < headers.length) {
         cells.add('—');
       }
@@ -277,19 +339,16 @@ class _TableWidget extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Header row
               _buildHeaderRow(headers),
-              // Divider under header
               Container(
                 height: 1,
                 color: DesignTokens.obsidianTeal.withValues(alpha: 0.35),
               ),
-              // Data rows
               ...dataRows.asMap().entries.map((entry) {
                 final isLast = entry.key == dataRows.length - 1;
                 return Column(
                   children: [
-                    _buildDataRow(entry.value, entry.key, headers.length),
+                    _buildDataRow(entry.value, entry.key),
                     if (!isLast)
                       Container(
                         height: 1,
@@ -311,11 +370,10 @@ class _TableWidget extends StatelessWidget {
       child: IntrinsicHeight(
         child: Row(
           children: headers.asMap().entries.map((entry) {
-            final isLast = entry.key == headers.length - 1;
             return _buildCell(
               text: entry.value,
               isHeader: true,
-              showRightBorder: !isLast,
+              showRightBorder: entry.key < headers.length - 1,
             );
           }).toList(),
         ),
@@ -323,29 +381,25 @@ class _TableWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildDataRow(List<String> cells, int rowIndex, int colCount) {
-    final isAlt = rowIndex.isOdd;
+  Widget _buildDataRow(List<String> cells, int rowIndex) {
     return Container(
-      color: isAlt
+      color: rowIndex.isOdd
           ? Colors.white.withValues(alpha: 0.015)
           : Colors.transparent,
       child: IntrinsicHeight(
         child: Row(
           children: cells.asMap().entries.map((entry) {
-            final isLast = entry.key == cells.length - 1;
             final text = entry.value;
-
-            // Detect positive/negative values for colour coding
             final isPositive =
-                text.contains('+') && !text.startsWith('-');
+                text.contains('+') || (text.contains('%') && !text.contains('-'));
             final isNegative = text.startsWith('-') ||
-                (text.contains('-') && !text.contains('+'));
-
+                text.contains('-₹') ||
+                text.contains('(-');
             return _buildCell(
               text: text,
               isHeader: false,
-              showRightBorder: !isLast,
-              valueColor: isPositive
+              showRightBorder: entry.key < cells.length - 1,
+              valueColor: isPositive && !isNegative
                   ? const Color(0xFF4ECDC4)
                   : isNegative
                       ? const Color(0xFFFF6B6B)
@@ -364,7 +418,7 @@ class _TableWidget extends StatelessWidget {
     Color? valueColor,
   }) {
     return Container(
-      constraints: const BoxConstraints(minWidth: 72, maxWidth: 140),
+      constraints: const BoxConstraints(minWidth: 72, maxWidth: 150),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
       decoration: BoxDecoration(
         border: showRightBorder
@@ -382,8 +436,7 @@ class _TableWidget extends StatelessWidget {
               ? DesignTokens.obsidianTeal
               : valueColor ?? DesignTokens.textHighContrast,
           fontSize: isHeader ? 11 : 13,
-          fontWeight:
-              isHeader ? FontWeight.w700 : FontWeight.w400,
+          fontWeight: isHeader ? FontWeight.w700 : FontWeight.w400,
           letterSpacing: isHeader ? 0.8 : 0,
           height: 1.4,
         ),
@@ -405,7 +458,7 @@ class _StatCardWidget extends StatelessWidget {
         value.contains('+') || (!value.contains('-') && value.contains('%'));
     final isNegative = value.startsWith('-');
 
-    final valueColor = isPositive
+    final valueColor = isPositive && !isNegative
         ? const Color(0xFF4ECDC4)
         : isNegative
             ? const Color(0xFFFF6B6B)
@@ -417,9 +470,7 @@ class _StatCardWidget extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFF0A0A0A),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: valueColor.withValues(alpha: 0.25),
-        ),
+        border: Border.all(color: valueColor.withValues(alpha: 0.25)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -476,10 +527,7 @@ class _RankedListWidget extends StatelessWidget {
           final barColor = item.isPositive
               ? const Color(0xFF4ECDC4)
               : const Color(0xFFFF6B6B);
-
-          final metricColor = item.isPositive
-              ? const Color(0xFF4ECDC4)
-              : const Color(0xFFFF6B6B);
+          final metricColor = barColor;
 
           return Column(
             children: [
@@ -487,20 +535,18 @@ class _RankedListWidget extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
                 child: Row(
                   children: [
-                    // Rank number
+                    // Rank circle
                     Container(
                       width: 26,
                       height: 26,
                       decoration: BoxDecoration(
                         color: item.rank == 1
-                            ? DesignTokens.obsidianTeal
-                                .withValues(alpha: 0.15)
+                            ? DesignTokens.obsidianTeal.withValues(alpha: 0.15)
                             : Colors.white.withValues(alpha: 0.04),
                         shape: BoxShape.circle,
                         border: Border.all(
                           color: item.rank == 1
-                              ? DesignTokens.obsidianTeal
-                                  .withValues(alpha: 0.5)
+                              ? DesignTokens.obsidianTeal.withValues(alpha: 0.5)
                               : Colors.white.withValues(alpha: 0.08),
                         ),
                       ),
@@ -531,7 +577,7 @@ class _RankedListWidget extends StatelessWidget {
                         ),
                       ),
                     ),
-                    // Bar + metric
+                    // Metric + bar
                     Expanded(
                       flex: 3,
                       child: Column(
@@ -553,8 +599,7 @@ class _RankedListWidget extends StatelessWidget {
                                 value: item.magnitude!,
                                 backgroundColor:
                                     Colors.white.withValues(alpha: 0.06),
-                                valueColor:
-                                    AlwaysStoppedAnimation<Color>(
+                                valueColor: AlwaysStoppedAnimation<Color>(
                                   barColor.withValues(alpha: 0.7),
                                 ),
                                 minHeight: 3,

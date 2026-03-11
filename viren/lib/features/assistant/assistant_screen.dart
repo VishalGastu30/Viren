@@ -2,14 +2,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-
 import '../../core/database/providers/database_providers.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/ai/model_download_service.dart';
 import '../../core/ai/model_setup_screen.dart';
-import '../../core/database/app_database.dart';
+import '../../core/database/app_database.dart' hide PortfolioSnapshot;
 import 'chat_message.dart';
 import 'conversation_repository.dart';
+import 'portfolio_analytics_engine.dart';
 import 'portfolio_context_builder.dart';
 import 'assistant_service.dart';
 import 'thinking_phrases.dart';
@@ -17,7 +17,6 @@ import 'memory_service.dart';
 import 'message_renderer.dart';
 
 // ─── Providers ────────────────────────────────────────────────────────────────
-
 final conversationRepositoryProvider = Provider<ConversationRepository>((ref) {
   final db = ref.watch(appDatabaseProvider);
   return ConversationRepository(db);
@@ -28,7 +27,6 @@ final memoryServiceProvider = Provider<MemoryService>((ref) {
   return MemoryService(db);
 });
 
-// Holds the currently active conversation ID. Null = no conversation selected.
 class ActiveConversationIdNotifier extends Notifier<int?> {
   @override
   int? build() => null;
@@ -39,7 +37,6 @@ final activeConversationIdProvider =
     NotifierProvider<ActiveConversationIdNotifier, int?>(
         ActiveConversationIdNotifier.new);
 
-// Watches messages for the active conversation reactively.
 final activeMessagesProvider = StreamProvider<List<ConversationMessage>>((ref) {
   final convId = ref.watch(activeConversationIdProvider);
   if (convId == null) return Stream.value([]);
@@ -47,14 +44,12 @@ final activeMessagesProvider = StreamProvider<List<ConversationMessage>>((ref) {
   return repo.watchMessages(convId);
 });
 
-// Watches all conversations reactively.
 final allConversationsProvider = StreamProvider<List<Conversation>>((ref) {
   final repo = ref.watch(conversationRepositoryProvider);
   return repo.watchAllConversations();
 });
 
 // ─── AssistantScreen ──────────────────────────────────────────────────────────
-
 class AssistantScreen extends ConsumerStatefulWidget {
   const AssistantScreen({super.key});
 
@@ -64,45 +59,35 @@ class AssistantScreen extends ConsumerStatefulWidget {
 
 class _AssistantScreenState extends ConsumerState<AssistantScreen>
     with TickerProviderStateMixin {
-
-  // Model readiness
   bool _isModelReady = false;
   bool _showSlideToUnlock = false;
 
-  // Input / loading
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   bool _isLoading = false;
 
-  // Portfolio + memory context
   String _portfolioContext = '';
   String _memoryContext = '';
+  PortfolioSnapshot? _snapshot;
 
-  // Thinking animation
   bool _showThinking = false;
   String _thinkingPhrase = '';
   Timer? _thinkingTimer;
   late AnimationController _shimmerController;
 
-  // Drawer
   late AnimationController _drawerController;
   late Animation<double> _contentScale;
 
-  // Message entrance — tracks newly added message indices
   final Set<int> _animatingIndices = {};
-
-  // Local message list — kept in sync with DB stream + streaming state
   List<ChatMessage> _messages = [];
 
   @override
   void initState() {
     super.initState();
-
     _shimmerController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     );
-
     _drawerController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 280),
@@ -110,7 +95,6 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
     _contentScale = Tween<double>(begin: 1.0, end: 0.92).animate(
       CurvedAnimation(parent: _drawerController, curve: Curves.easeOutCubic),
     );
-
     _checkModelReady();
     _initFirstConversation();
   }
@@ -124,8 +108,6 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
     _thinkingTimer?.cancel();
     super.dispose();
   }
-
-  // ── Init ──────────────────────────────────────────────────────────────────
 
   Future<void> _initFirstConversation() async {
     final repo = ref.read(conversationRepositoryProvider);
@@ -142,18 +124,18 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
     final dbMessages = await repo.getMessages(convId);
     if (mounted) {
       setState(() {
-        _messages = dbMessages.map((m) => ChatMessage(
-          text: m.messageText,
-          isUser: m.isUser,
-          timestamp: m.timestamp,
-        )).toList();
+        _messages = dbMessages
+            .map((m) => ChatMessage(
+                  text: m.messageText,
+                  isUser: m.isUser,
+                  timestamp: m.timestamp,
+                ))
+            .toList();
         _animatingIndices.clear();
       });
       _scrollToBottom();
     }
   }
-
-  // ── Model readiness ───────────────────────────────────────────────────────
 
   Future<void> _checkModelReady() async {
     final ready = await ModelDownloadService.isModelReady();
@@ -162,33 +144,38 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
       final fileExists = await ModelDownloadService.modelFileExists();
       if (!fileExists) {
         await ModelDownloadService.resetModelReady();
-        setState(() { _isModelReady = false; _showSlideToUnlock = false; });
+        setState(() {
+          _isModelReady = false;
+          _showSlideToUnlock = false;
+        });
         return;
       }
       setState(() => _isModelReady = true);
     }
   }
 
-  // ── Portfolio + memory context ────────────────────────────────────────────
-
   Future<void> _loadPortfolioContext() async {
     final db = ref.read(appDatabaseProvider);
+
+    final engine = PortfolioAnalyticsEngine(db);
+    final snap = await engine.buildSnapshot();
+
     final builder = PortfolioContextBuilder(db);
     final ctx = await builder.build();
+
     final memoryService = ref.read(memoryServiceProvider);
     final memoryCtx = await memoryService.getMemoryContext();
+
     if (mounted) {
       setState(() {
+        _snapshot = snap;
         _portfolioContext = ctx;
         _memoryContext = memoryCtx;
       });
     }
   }
 
-  // ── Conversation management ───────────────────────────────────────────────
-
   Future<void> _selectConversation(Conversation conv) async {
-    // Summarise current conversation before switching (fire and forget)
     final currentId = ref.read(activeConversationIdProvider);
     if (currentId != null && currentId != conv.id && _messages.length >= 4) {
       final memoryService = ref.read(memoryServiceProvider);
@@ -200,14 +187,12 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
             .toList(),
       );
     }
-
     ref.read(activeConversationIdProvider.notifier).set(conv.id);
     await _syncMessagesFromDb(conv.id);
     _closeDrawer();
   }
 
   Future<void> _newConversation() async {
-    // Summarise outgoing conversation
     final currentId = ref.read(activeConversationIdProvider);
     if (currentId != null && _messages.length >= 4) {
       final memoryService = ref.read(memoryServiceProvider);
@@ -219,7 +204,6 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
             .toList(),
       );
     }
-
     final repo = ref.read(conversationRepositoryProvider);
     final conv = await repo.createConversation();
     ref.read(activeConversationIdProvider.notifier).set(conv.id);
@@ -235,7 +219,6 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
   Future<void> _deleteConversation(Conversation conv) async {
     final repo = ref.read(conversationRepositoryProvider);
     await repo.deleteConversation(conv.id);
-
     final currentId = ref.read(activeConversationIdProvider);
     if (currentId == conv.id) {
       final remaining = await repo.getAllConversations();
@@ -255,7 +238,8 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: DesignTokens.graphiteSurface,
-        title: Text('Rename', style: TextStyle(color: DesignTokens.textHighContrast)),
+        title: Text('Rename',
+            style: TextStyle(color: DesignTokens.textHighContrast)),
         content: TextField(
           controller: controller,
           autofocus: true,
@@ -274,11 +258,13 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text('Cancel', style: TextStyle(color: DesignTokens.textMediumContrast)),
+            child: Text('Cancel',
+                style: TextStyle(color: DesignTokens.textMediumContrast)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: Text('Save', style: TextStyle(color: DesignTokens.obsidianTeal)),
+            child: Text('Save',
+                style: TextStyle(color: DesignTokens.obsidianTeal)),
           ),
         ],
       ),
@@ -289,14 +275,10 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
     }
   }
 
-  // ── Messaging ─────────────────────────────────────────────────────────────
-
   Future<void> _sendMessage(String text) async {
     if (text.trim().isEmpty || _isLoading || !_isModelReady) return;
 
     final repo = ref.read(conversationRepositoryProvider);
-
-    // Create conversation if none active
     int convId;
     final currentId = ref.read(activeConversationIdProvider);
     if (currentId == null) {
@@ -307,16 +289,16 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
       convId = currentId;
     }
 
-    // Auto-title on first message
     if (_messages.isEmpty) {
       await repo.autoTitle(convId, text.trim());
     }
 
     await repo.addMessage(conversationId: convId, text: text.trim(), isUser: true);
 
-    final userMsg = ChatMessage(text: text.trim(), isUser: true, timestamp: DateTime.now());
-    final placeholderMsg = ChatMessage(text: '', isUser: false, timestamp: DateTime.now(), isStreaming: true);
-
+    final userMsg =
+        ChatMessage(text: text.trim(), isUser: true, timestamp: DateTime.now());
+    final placeholderMsg = ChatMessage(
+        text: '', isUser: false, timestamp: DateTime.now(), isStreaming: true);
     final userIndex = _messages.length;
     final placeholderIndex = userIndex + 1;
 
@@ -330,7 +312,6 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
     });
     _scrollToBottom();
 
-    // Thinking animation — only shows after 400ms
     _thinkingPhrase = ThinkingPhrases.forMessage(text.trim());
     _thinkingTimer = Timer(const Duration(milliseconds: 400), () {
       if (mounted && _isLoading) {
@@ -346,6 +327,7 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
         portfolioContext: _portfolioContext,
         history: _messages.where((m) => !m.isStreaming).toList(),
         memoryContext: _memoryContext,
+        snapshot: _snapshot,
       );
 
       _thinkingTimer?.cancel();
@@ -357,7 +339,6 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
 
       await repo.addMessage(conversationId: convId, text: response, isUser: false);
 
-      // Word-by-word streaming simulation
       final words = response.split(' ');
       String accumulated = '';
       for (final word in words) {
@@ -391,7 +372,8 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
               placeholderMsg.copyWith(text: errText, isStreaming: false);
           _isLoading = false;
         });
-        await repo.addMessage(conversationId: convId, text: errText, isUser: false, isError: true);
+        await repo.addMessage(
+            conversationId: convId, text: errText, isUser: false, isError: true);
       }
     }
     _scrollToBottom();
@@ -409,19 +391,9 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
     });
   }
 
-  // ── Drawer ────────────────────────────────────────────────────────────────
-
-  void _openDrawer() {
-    _drawerController.forward();
-  }
-
-  void _closeDrawer() {
-    _drawerController.reverse();
-  }
-
+  void _openDrawer() => _drawerController.forward();
+  void _closeDrawer() => _drawerController.reverse();
   bool get _drawerOpen => _drawerController.value > 0.01;
-
-  // ── Build ─────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -440,14 +412,14 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
       builder: (context, child) {
         return Stack(
           children: [
-            // Main content — scales and shifts right as drawer opens
             Transform(
               transform: Matrix4.identity()
                 ..setTranslationRaw(_drawerController.value * 260.0, 0.0, 0.0)
-                ..scale(_contentScale.value),
+                ..scaleByDouble(_contentScale.value, _contentScale.value, _contentScale.value, 1.0),
               alignment: Alignment.centerLeft,
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(_drawerController.value * 20),
+                borderRadius:
+                    BorderRadius.circular(_drawerController.value * 20),
                 child: GestureDetector(
                   onTap: _drawerOpen ? _closeDrawer : null,
                   child: AbsorbPointer(
@@ -457,19 +429,16 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
                 ),
               ),
             ),
-
-            // Dim overlay
             if (_drawerController.value > 0)
               Positioned.fill(
                 child: GestureDetector(
                   onTap: _closeDrawer,
                   child: Container(
-                    color: Colors.black.withValues(alpha: 0.45 * _drawerController.value),
+                    color: Colors.black
+                        .withValues(alpha: 0.45 * _drawerController.value),
                   ),
                 ),
               ),
-
-            // Drawer panel
             Transform.translate(
               offset: Offset(-280 * (1 - _drawerController.value), 0),
               child: _buildDrawer(),
@@ -479,8 +448,6 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
       },
     );
   }
-
-  // ── Drawer ────────────────────────────────────────────────────────────────
 
   Widget _buildDrawer() {
     final activeId = ref.watch(activeConversationIdProvider);
@@ -497,7 +464,6 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // ── Header ──
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 24, 16, 0),
                   child: Row(
@@ -522,17 +488,18 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
                         ],
                       ),
                       const Spacer(),
-                      // New chat button
                       GestureDetector(
                         onTap: _newConversation,
                         child: Container(
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            color: DesignTokens.obsidianTeal.withValues(alpha: 0.12),
+                            color: DesignTokens.obsidianTeal
+                                .withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(10),
                             border: Border.all(
-                              color: DesignTokens.obsidianTeal.withValues(alpha: 0.3),
+                              color: DesignTokens.obsidianTeal
+                                  .withValues(alpha: 0.3),
                             ),
                           ),
                           child: Icon(Icons.edit_outlined,
@@ -542,27 +509,22 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
                     ],
                   ),
                 ),
-
                 const SizedBox(height: 24),
-
-                // ── Section label ──
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
                   child: Text('RECENTS',
                       style: TextStyle(
-                        color: DesignTokens.textMediumContrast.withValues(alpha: 0.4),
+                        color: DesignTokens.textMediumContrast
+                            .withValues(alpha: 0.4),
                         fontSize: 10,
                         letterSpacing: 2,
                         fontWeight: FontWeight.w600,
                       )),
                 ),
-
-                // ── Conversation list ──
                 Expanded(
                   child: convsAsync.when(
                     loading: () => const Center(
-                      child: CircularProgressIndicator(strokeWidth: 1),
-                    ),
+                        child: CircularProgressIndicator(strokeWidth: 1)),
                     error: (_, __) => const SizedBox.shrink(),
                     data: (convs) {
                       if (convs.isEmpty) {
@@ -603,16 +565,12 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
                     },
                   ),
                 ),
-
-                // ── Footer ──
                 Container(
                   padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
                   decoration: BoxDecoration(
                     border: Border(
-                      top: BorderSide(
-                        color: Colors.white.withValues(alpha: 0.05),
-                      ),
-                    ),
+                        top: BorderSide(
+                            color: Colors.white.withValues(alpha: 0.05))),
                   ),
                   child: Row(
                     children: [
@@ -643,8 +601,6 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
     );
   }
 
-  // ── Chat screen ───────────────────────────────────────────────────────────
-
   Widget _buildChatScreen() {
     final activeId = ref.watch(activeConversationIdProvider);
     final convsAsync = ref.watch(allConversationsProvider);
@@ -672,7 +628,8 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
         title: GestureDetector(
           onTap: () async {
             final convsData = ref.read(allConversationsProvider).value;
-            final active = convsData?.where((c) => c.id == activeId).firstOrNull;
+            final active =
+                convsData?.where((c) => c.id == activeId).firstOrNull;
             if (active != null) await _renameConversation(active);
           },
           child: Column(
@@ -681,15 +638,16 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
               Text(
                 activeTitle ?? 'Viren',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: DesignTokens.textHighContrast,
-                  fontWeight: FontWeight.w400,
-                ),
+                      color: DesignTokens.textHighContrast,
+                      fontWeight: FontWeight.w400,
+                    ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
               Text('tap to rename',
                   style: TextStyle(
-                    color: DesignTokens.textMediumContrast.withValues(alpha: 0.4),
+                    color: DesignTokens.textMediumContrast
+                        .withValues(alpha: 0.4),
                     fontSize: 9,
                     letterSpacing: 0.5,
                   )),
@@ -703,7 +661,8 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
                   color: DesignTokens.textMediumContrast, size: 20),
               onPressed: () async {
                 final convsData = ref.read(allConversationsProvider).value;
-                final active = convsData?.where((c) => c.id == activeId).firstOrNull;
+                final active =
+                    convsData?.where((c) => c.id == activeId).firstOrNull;
                 if (active != null) await _deleteConversation(active);
               },
             ),
@@ -716,13 +675,16 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
       ),
       body: Column(
         children: [
+          // ── FIX: Empty state + suggestions unified in one Expanded ──────
+          // Previously _buildEmptyState() was Expanded but _buildSuggestions()
+          // was outside it — combined height exceeded available space by 0.111px.
+          // Now both are merged inside a single Expanded widget.
           Expanded(
             child: _messages.isEmpty
-                ? _buildEmptyState()
+                ? _buildEmptyStateWithSuggestions()
                 : _buildMessageList(),
           ),
           if (_showThinking) _buildThinkingIndicator(),
-          if (_messages.isEmpty) _buildSuggestions(),
           _buildInputBar(),
         ],
       ),
@@ -761,88 +723,103 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
     );
   }
 
-  Widget _buildEmptyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(40),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                color: DesignTokens.obsidianTeal.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: DesignTokens.obsidianTeal.withValues(alpha: 0.2),
-                ),
-              ),
-              child: const Icon(Icons.bolt_rounded,
-                  color: DesignTokens.obsidianTeal, size: 32),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              'Ask me anything about\nyour portfolio.',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w300,
-                height: 1.4,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Everything stays on your device.',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: DesignTokens.textMediumContrast,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSuggestions() {
+  // ── FIX: Unified empty state — icon + text + suggestions in one widget ───
+  // Root cause of overflow: _buildEmptyState() sat inside Expanded but
+  // _buildSuggestions() was a sibling outside it. Flutter laid out the
+  // Expanded first, then tried to fit suggestions below — 0.111px over budget.
+  // Solution: merge both into a single Column inside Expanded.
+  Widget _buildEmptyStateWithSuggestions() {
     final suggestions = [
       "Which holding is performing best?",
       "What's my total return so far?",
       "How much have I paid in charges?",
     ];
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: suggestions.map((s) => Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: GestureDetector(
-            onTap: () => _sendMessage(s),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: DesignTokens.graphiteSurface,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: DesignTokens.obsidianTeal.withValues(alpha: 0.15),
-                ),
-              ),
-              child: Row(
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Expanded(
-                    child: Text(s,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: DesignTokens.textHighContrast,
-                        )),
+                  Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      color: DesignTokens.obsidianTeal.withValues(alpha: 0.1),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color:
+                            DesignTokens.obsidianTeal.withValues(alpha: 0.2),
+                      ),
+                    ),
+                    child: const Icon(Icons.bolt_rounded,
+                        color: DesignTokens.obsidianTeal, size: 32),
                   ),
-                  Icon(Icons.north_east_rounded,
-                      size: 14, color: DesignTokens.obsidianTeal),
+                  const SizedBox(height: 20),
+                  Text(
+                    'Ask me anything about\nyour portfolio.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w300,
+                          height: 1.4,
+                        ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Everything stays on your device.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: DesignTokens.textMediumContrast,
+                        ),
+                  ),
+                  const SizedBox(height: 36),
+                  // Suggestion chips
+                  ...suggestions.map((s) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: GestureDetector(
+                          onTap: () => _sendMessage(s),
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 12),
+                            decoration: BoxDecoration(
+                              color: DesignTokens.graphiteSurface,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: DesignTokens.obsidianTeal
+                                    .withValues(alpha: 0.15),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(s,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(
+                                            color:
+                                                DesignTokens.textHighContrast,
+                                          )),
+                                ),
+                                Icon(Icons.north_east_rounded,
+                                    size: 14,
+                                    color: DesignTokens.obsidianTeal),
+                              ],
+                            ),
+                          ),
+                        ),
+                      )),
                 ],
               ),
             ),
           ),
-        )).toList(),
-      ),
+        );
+      },
     );
   }
 
@@ -864,8 +841,8 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
               decoration: BoxDecoration(
                 color: DesignTokens.graphiteBase,
                 borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.08)),
+                border:
+                    Border.all(color: Colors.white.withValues(alpha: 0.08)),
               ),
               child: TextField(
                 controller: _inputController,
@@ -879,8 +856,9 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
                       ? 'Ask Viren anything...'
                       : 'Setting up Viren...',
                   hintStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: DesignTokens.textMediumContrast.withValues(alpha: 0.4),
-                  ),
+                        color: DesignTokens.textMediumContrast
+                            .withValues(alpha: 0.4),
+                      ),
                   border: InputBorder.none,
                   contentPadding: const EdgeInsets.symmetric(vertical: 12),
                 ),
@@ -905,7 +883,8 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
                 boxShadow: _isModelReady && !_isLoading
                     ? [
                         BoxShadow(
-                          color: DesignTokens.obsidianTeal.withValues(alpha: 0.3),
+                          color: DesignTokens.obsidianTeal
+                              .withValues(alpha: 0.3),
                           blurRadius: 12,
                           offset: const Offset(0, 4),
                         )
@@ -925,8 +904,6 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
       ),
     );
   }
-
-  // ── Setup overlay + slide to unlock ───────────────────────────────────────
 
   Widget _buildSetupOverlay() {
     return Positioned.fill(
@@ -997,7 +974,8 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
               const SizedBox(height: 16),
               Text('slide to begin',
                   style: TextStyle(
-                    color: DesignTokens.textMediumContrast.withValues(alpha: 0.4),
+                    color: DesignTokens.textMediumContrast
+                        .withValues(alpha: 0.4),
                     fontSize: 11,
                     letterSpacing: 1.5,
                   )),
@@ -1010,15 +988,10 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
 }
 
 // ─── Shimmer Thinking Widget ──────────────────────────────────────────────────
-
 class _ShimmerThinkingWidget extends StatelessWidget {
   final String phrase;
   final AnimationController controller;
-
-  const _ShimmerThinkingWidget({
-    required this.phrase,
-    required this.controller,
-  });
+  const _ShimmerThinkingWidget({required this.phrase, required this.controller});
 
   @override
   Widget build(BuildContext context) {
@@ -1077,7 +1050,8 @@ class _PulsingDots extends StatelessWidget {
           animation: controller,
           builder: (_, __) {
             final phase = ((controller.value * 3) - i).clamp(0.0, 1.0);
-            final opacity = (phase < 0.5 ? phase * 2 : (1 - phase) * 2).clamp(0.3, 1.0);
+            final opacity =
+                (phase < 0.5 ? phase * 2 : (1 - phase) * 2).clamp(0.3, 1.0);
             return Padding(
               padding: const EdgeInsets.symmetric(horizontal: 1.5),
               child: Opacity(
@@ -1086,9 +1060,7 @@ class _PulsingDots extends StatelessWidget {
                   width: 4,
                   height: 4,
                   decoration: const BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                  ),
+                      color: Colors.white, shape: BoxShape.circle),
                 ),
               ),
             );
@@ -1100,7 +1072,6 @@ class _PulsingDots extends StatelessWidget {
 }
 
 // ─── Animated Chat Bubble ─────────────────────────────────────────────────────
-
 class _AnimatedChatBubble extends StatefulWidget {
   final ChatMessage message;
   final bool animate;
@@ -1130,15 +1101,10 @@ class _AnimatedChatBubbleState extends State<_AnimatedChatBubble>
   void initState() {
     super.initState();
     _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 250),
-    );
+        vsync: this, duration: const Duration(milliseconds: 250));
     _fadeAnim = CurvedAnimation(parent: _controller, curve: Curves.easeOut);
-    _slideAnim = Tween<Offset>(
-      begin: const Offset(0, 0.12),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
-
+    _slideAnim = Tween<Offset>(begin: const Offset(0, 0.12), end: Offset.zero)
+        .animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
     if (widget.animate) {
       _controller.forward().then((_) => widget.onAnimationComplete());
     } else {
@@ -1176,8 +1142,7 @@ class _AnimatedChatBubbleState extends State<_AnimatedChatBubble>
                       : Alignment.centerLeft,
                   child: ConstrainedBox(
                     constraints: BoxConstraints(
-                      maxWidth: MediaQuery.of(context).size.width * 0.80,
-                    ),
+                        maxWidth: MediaQuery.of(context).size.width * 0.80),
                     child: widget.message.isUser
                         ? _UserBubble(text: widget.message.text)
                         : _VirenBubble(
@@ -1221,7 +1186,6 @@ class _AnimatedChatBubbleState extends State<_AnimatedChatBubble>
 }
 
 // ─── User Bubble ──────────────────────────────────────────────────────────────
-
 class _UserBubble extends StatelessWidget {
   final String text;
   const _UserBubble({required this.text});
@@ -1242,15 +1206,15 @@ class _UserBubble extends StatelessWidget {
             color: DesignTokens.obsidianTeal.withValues(alpha: 0.3)),
       ),
       child: Text(text,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: DesignTokens.textHighContrast,
-              )),
+          style: Theme.of(context)
+              .textTheme
+              .bodyMedium
+              ?.copyWith(color: DesignTokens.textHighContrast)),
     );
   }
 }
 
 // ─── Viren Bubble ─────────────────────────────────────────────────────────────
-
 class _VirenBubble extends StatelessWidget {
   final ChatMessage message;
   final AnimationController shimmerController;
@@ -1274,13 +1238,11 @@ class _VirenBubble extends StatelessWidget {
         AnimatedBuilder(
           animation: shimmerController,
           builder: (context, child) {
-            // Pulse the left border while streaming
             final borderOpacity = message.isStreaming
                 ? (0.4 + shimmerController.value * 0.6)
                 : 1.0;
             return Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
               decoration: BoxDecoration(
                 color: DesignTokens.graphiteSurface,
                 borderRadius: const BorderRadius.only(
@@ -1299,13 +1261,26 @@ class _VirenBubble extends StatelessWidget {
               ),
               child: message.isStreaming && message.text.isEmpty
                   ? const _TypingIndicator()
-                  : MessageRenderer(
-                      text: message.text,
-                      textStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: DesignTokens.textHighContrast,
-                            height: 1.6,
-                          ),
-                    ),
+                  : message.isStreaming
+                      // While streaming: plain text only — avoids pipe characters
+                      // flickering mid-render before the table is complete
+                      ? Text(
+                          message.text,
+                          style:
+                              Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    color: DesignTokens.textHighContrast,
+                                    height: 1.6,
+                                  ),
+                        )
+                      // Streaming done: full renderer with tables, ranked lists, etc.
+                      : MessageRenderer(
+                          text: message.text,
+                          textStyle:
+                              Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    color: DesignTokens.textHighContrast,
+                                    height: 1.6,
+                                  ),
+                        ),
             );
           },
         ),
@@ -1315,7 +1290,6 @@ class _VirenBubble extends StatelessWidget {
 }
 
 // ─── Typing Indicator ─────────────────────────────────────────────────────────
-
 class _TypingIndicator extends StatefulWidget {
   const _TypingIndicator();
   @override
@@ -1333,15 +1307,14 @@ class _TypingIndicatorState extends State<_TypingIndicator>
     _controllers = List.generate(
         3,
         (i) => AnimationController(
-              vsync: this,
-              duration: const Duration(milliseconds: 600),
-            ));
+            vsync: this, duration: const Duration(milliseconds: 600)));
     _anims = _controllers
         .map((c) => Tween<double>(begin: 0.3, end: 1.0)
             .animate(CurvedAnimation(parent: c, curve: Curves.easeInOut)))
         .toList();
     for (int i = 0; i < 3; i++) {
-      Future.delayed(Duration(milliseconds: i * 200), () {
+      Future.delayed(
+          Duration(milliseconds: i * 200), () {
         if (mounted) _controllers[i].repeat(reverse: true);
       });
     }
@@ -1349,7 +1322,9 @@ class _TypingIndicatorState extends State<_TypingIndicator>
 
   @override
   void dispose() {
-    for (final c in _controllers) { c.dispose(); }
+    for (final c in _controllers) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -1367,9 +1342,8 @@ class _TypingIndicatorState extends State<_TypingIndicator>
                     width: 6,
                     height: 6,
                     decoration: const BoxDecoration(
-                      color: DesignTokens.obsidianTeal,
-                      shape: BoxShape.circle,
-                    ),
+                        color: DesignTokens.obsidianTeal,
+                        shape: BoxShape.circle),
                   ),
                 ),
               )),
@@ -1378,7 +1352,6 @@ class _TypingIndicatorState extends State<_TypingIndicator>
 }
 
 // ─── Conversation Tile ────────────────────────────────────────────────────────
-
 class _ConversationTile extends StatelessWidget {
   final Conversation conversation;
   final bool isActive;
@@ -1408,27 +1381,30 @@ class _ConversationTile extends StatelessWidget {
       ),
       confirmDismiss: (_) async {
         return await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            backgroundColor: DesignTokens.graphiteSurface,
-            title: Text('Delete conversation?',
-                style: TextStyle(color: DesignTokens.textHighContrast, fontSize: 16)),
-            content: Text('This cannot be undone.',
-                style: TextStyle(color: DesignTokens.textMediumContrast)),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: Text('Cancel',
+              context: context,
+              builder: (ctx) => AlertDialog(
+                backgroundColor: DesignTokens.graphiteSurface,
+                title: Text('Delete conversation?',
+                    style: TextStyle(
+                        color: DesignTokens.textHighContrast, fontSize: 16)),
+                content: Text('This cannot be undone.',
                     style: TextStyle(color: DesignTokens.textMediumContrast)),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: Text('Cancel',
+                        style:
+                            TextStyle(color: DesignTokens.textMediumContrast)),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: Text('Delete',
+                        style: TextStyle(color: DesignTokens.crimsonWarning)),
+                  ),
+                ],
               ),
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: Text('Delete',
-                    style: TextStyle(color: DesignTokens.crimsonWarning)),
-              ),
-            ],
-          ),
-        ) ?? false;
+            ) ??
+            false;
       },
       onDismissed: (_) => onDelete(),
       child: GestureDetector(
@@ -1460,14 +1436,14 @@ class _ConversationTile extends StatelessWidget {
                     ? DesignTokens.textHighContrast
                     : DesignTokens.textMediumContrast,
                 fontSize: 13,
-                fontWeight:
-                    isActive ? FontWeight.w500 : FontWeight.normal,
+                fontWeight: isActive ? FontWeight.w500 : FontWeight.normal,
               ),
             ),
             subtitle: Text(
               _relativeTime(conversation.updatedAt),
               style: TextStyle(
-                color: DesignTokens.textMediumContrast.withValues(alpha: 0.5),
+                color:
+                    DesignTokens.textMediumContrast.withValues(alpha: 0.5),
                 fontSize: 10,
               ),
             ),
@@ -1488,10 +1464,10 @@ class _ConversationTile extends StatelessWidget {
 }
 
 // ─── Slide To Unlock ──────────────────────────────────────────────────────────
-
 class _SlideToUnlockBar extends StatefulWidget {
   final VoidCallback onUnlocked;
   const _SlideToUnlockBar({required this.onUnlocked});
+
   @override
   State<_SlideToUnlockBar> createState() => _SlideToUnlockBarState();
 }
@@ -1570,7 +1546,8 @@ class _SlideToUnlockBarState extends State<_SlideToUnlockBar> {
                   shape: BoxShape.circle,
                   boxShadow: [
                     BoxShadow(
-                      color: DesignTokens.obsidianTeal.withValues(alpha: 0.4),
+                      color:
+                          DesignTokens.obsidianTeal.withValues(alpha: 0.4),
                       blurRadius: 12,
                       spreadRadius: 2,
                     ),

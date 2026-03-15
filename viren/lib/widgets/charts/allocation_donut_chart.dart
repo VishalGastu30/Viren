@@ -6,8 +6,9 @@ import '../../core/animations/animation_presets.dart';
 
 class AllocationDonutChart extends StatefulWidget {
   final List<Holding> holdings;
+  final List<Color>? colors;
 
-  const AllocationDonutChart({super.key, required this.holdings});
+  const AllocationDonutChart({super.key, required this.holdings, this.colors});
 
   @override
   State<AllocationDonutChart> createState() => _AllocationDonutChartState();
@@ -47,6 +48,7 @@ class _AllocationDonutChartState extends State<AllocationDonutChart> with Single
           painter: _DonutPainter(
             holdings: widget.holdings,
             progress: _animation.value,
+            customColors: widget.colors,
           ),
         );
       },
@@ -57,8 +59,18 @@ class _AllocationDonutChartState extends State<AllocationDonutChart> with Single
 class _DonutPainter extends CustomPainter {
   final List<Holding> holdings;
   final double progress;
+  final List<Color>? customColors;
 
-  _DonutPainter({required this.holdings, required this.progress});
+  _DonutPainter({required this.holdings, required this.progress, this.customColors});
+
+  static const _defaultColors = [
+    DesignTokens.obsidianTeal,
+    DesignTokens.ashGold,
+    Color(0xFF0F766E), // Darker teal
+    Color(0xFF8B7A44), // Darker gold
+    Color(0xFF1F484C), // Deep moss
+    DesignTokens.textMediumContrast,
+  ];
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -76,15 +88,7 @@ class _DonutPainter extends CustomPainter {
 
     double currentAngle = -pi / 2; // Start from top
     
-    // Colors matching theme but slightly distinct for visual separation
-    final colors = [
-      DesignTokens.obsidianTeal,
-      DesignTokens.ashGold,
-      const Color(0xFF0F766E), // Darker teal
-      const Color(0xFF8B7A44), // Darker gold
-      const Color(0xFF1F484C), // Deep moss
-      DesignTokens.textMediumContrast,
-    ];
+    final colors = customColors ?? _defaultColors;
 
     final totalInvested = holdings.fold(0.0, (acc, h) => acc + h.investedValue);
 
@@ -107,6 +111,7 @@ class _DonutPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _DonutPainter oldDelegate) {
-    return oldDelegate.progress != progress;
+    return oldDelegate.progress != progress || oldDelegate.customColors != customColors;
   }
 }
+

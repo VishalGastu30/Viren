@@ -5,6 +5,7 @@ import '../../database/enums.dart';
 import '../../database/repositories/trade_repository.dart';
 import '../../database/daos/import_dao.dart';
 import '../../database/app_database.dart';
+import '../../intelligence/confidence_calculator.dart';
 import '../../auth/auth_service.dart';
 import 'broker_email_parser.dart';
 import 'scanner_controller.dart';
@@ -119,13 +120,19 @@ class EmailDiscoveryResult {
 class EmailImportService {
   final TradeRepository _tradeRepo;
   final ImportDao _importDao;
+  final AppDatabase _db;
+  final ConfidenceCalculator _confidenceCalculator;
   final _uuid = const Uuid();
 
   EmailImportService({
     required TradeRepository tradeRepository,
     required ImportDao importDao,
+    required AppDatabase db,
+    required ConfidenceCalculator confidenceCalculator,
   })  : _tradeRepo = tradeRepository,
-        _importDao = importDao;
+        _importDao = importDao,
+        _db = db,
+        _confidenceCalculator = confidenceCalculator;
 
   /// STAGE 1: DISCOVERY
   /// Queries Gmail, fetches full messages. PAN-independent.
@@ -386,6 +393,29 @@ class EmailImportService {
           errors.add('${trade.symbol}: $e');
         }
       }
+    }
+
+    // Recompute confidence score after new trades are imported
+    try {
+      final allTrades = await _db.select(_db.trades).get();
+      // Build reasons map: tradeId → rawTradeNo as proxy for reason
+      // (actual reasons are stored encrypted — use empty map for now,
+      //  strategy score will reflect % of trades with reasons)
+      final reasons = <String, String?>{};
+      final emotionalStates = <String, String?>{};
+      for (final t in allTrades) {
+        // Use rawTradeNo as a signal that the trade was documented
+        reasons[t.id] = t.rawTradeNo?.isNotEmpty == true
+            ? 'Imported from broker' : null;
+        emotionalStates[t.id] = null; // no emotional data from imports
+      }
+      await _confidenceCalculator.compute(
+        trades: allTrades,
+        reasons: reasons,
+        emotionalStates: emotionalStates,
+      );
+    } catch (_) {
+      // Non-fatal — score update failure must never block trade import
     }
 
     return EmailImportResult(

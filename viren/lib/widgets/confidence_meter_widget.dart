@@ -40,12 +40,12 @@ class ConfidenceMeterWidget extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(children: [
-            Text('Investor Profile', style: Theme.of(context).textTheme.titleMedium),
+            Text('Behaviour Score', style: Theme.of(context).textTheme.titleMedium),
             const Spacer(),
             Text('Monthly', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast, fontSize: 10)),
           ]),
           const SizedBox(height: 4),
-          Text('A slow-moving measure of consistency, discipline, and emotional stability.', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast, height: 1.4)),
+          Text('A slow-moving measure of your trading psychology.', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: DesignTokens.textMediumContrast, height: 1.4)),
           const SizedBox(height: 20),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,

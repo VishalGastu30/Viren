@@ -1,7 +1,10 @@
+import 'dart:math' as math;
 import 'package:drift/drift.dart';
+import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import '../../core/database/app_database.dart';
 import '../../core/database/enums.dart' as db_enums;
+import '../../core/market/market_data_service.dart';
 import '../../core/market/nse_price_service.dart';
 
 // ─── Data Models ──────────────────────────────────────────────────────────────
@@ -17,6 +20,7 @@ class HoldingAnalysis {
   final double? returnPct;
   final int daysHeld;
   final double portfolioWeight; // % of total portfolio value
+  final double? dayChangePercent;
 
   const HoldingAnalysis({
     required this.symbol,
@@ -29,6 +33,7 @@ class HoldingAnalysis {
     this.currentValue,
     this.unrealisedPnL,
     this.returnPct,
+    this.dayChangePercent,
   });
 
   bool get hasPriceData => cmp != null;
@@ -60,6 +65,8 @@ class PortfolioSnapshot {
   final String firstTradeDate;
   final bool hasPriceData;
   final String today;
+  final double? xirr;
+  final List<Trade> trades;
 
   // Pre-computed rankings — guaranteed correct math
   final HoldingAnalysis? bestByReturn;
@@ -84,6 +91,8 @@ class PortfolioSnapshot {
     this.worstByReturn,
     this.bestByAbsoluteProfit,
     this.largestByWeight,
+    this.xirr,
+    this.trades = const [],
   });
 
   bool get isEmpty => holdings.isEmpty;
@@ -115,6 +124,39 @@ enum QuestionIntent {
   daysHeld,
   whatCanYouDo,
   general, // not portfolio-specific — let model answer freely
+}
+
+// ─── XIRR Calculator ──────────────────────────────────────────────────────────
+
+class XirrCalc {
+  static double? calculate(
+      List<({double amount, DateTime date})> cashflows) {
+    if (cashflows.length < 2) return null;
+    try {
+      double rate = 0.1;
+      const maxIter = 100;
+      const tol = 1e-6;
+      final t0 = cashflows.first.date;
+      for (int i = 0; i < maxIter; i++) {
+        double f = 0;
+        double df = 0;
+        for (final cf in cashflows) {
+          final t = cf.date.difference(t0).inDays / 365.0;
+          final pow = math.pow(1 + rate, t);
+          f += cf.amount / pow;
+          df += -t * cf.amount / (pow * (1 + rate));
+        }
+        if (df.abs() < tol) break;
+        final newRate = rate - f / df;
+        if ((newRate - rate).abs() < tol) return newRate * 100;
+        rate = newRate;
+        if (rate <= -1) return null;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
 }
 
 // ─── Analytics Engine ─────────────────────────────────────────────────────────
@@ -227,12 +269,29 @@ class PortfolioAnalyticsEngine {
         hasPriceData: false,
         today: today,
         profitableCount: 0,
+        trades: trades,
       );
     }
 
     // Live prices
     final symbols = holdings.map((h) => h.instrumentSymbol.toUpperCase()).toList();
     final prices = await NsePriceService.getPrices(symbols);
+
+    // Fetch day change data via MarketDataService
+    final marketService = MarketDataService();
+    final Map<String, double> dayChangePctMap = {};
+    try {
+      final quoteFutures = symbols.map((s) => marketService.fetchQuote(s));
+      final quotes = await Future.wait(quoteFutures);
+      for (int i = 0; i < symbols.length; i++) {
+        final q = quotes[i];
+        if (q != null) {
+          dayChangePctMap[symbols[i]] = q.dayChangePercent;
+        }
+      }
+    } catch (e) {
+      debugPrint('Day change fetch failed: $e');
+    }
 
     // First buy date per symbol for accurate daysHeld
     final Map<String, DateTime> firstBuyDate = {};
@@ -304,6 +363,7 @@ class PortfolioAnalyticsEngine {
         returnPct: returnPct,
         daysHeld: daysHeld,
         portfolioWeight: weight,
+        dayChangePercent: dayChangePctMap[symbol],
       ));
     }
 
@@ -360,6 +420,32 @@ class PortfolioAnalyticsEngine {
     final totalReturnPct =
         totalInvested > 0 ? (totalPnL / totalInvested) * 100 : 0.0;
 
+    // Compute portfolio-level XIRR
+    double? portfolioXirr;
+    try {
+      final cashflows = <({double amount, DateTime date})>[];
+      for (final t in trades) {
+        if (t.tradeType == db_enums.TradeType.buy) {
+          cashflows.add((
+            amount: -(t.pricePerUnit * t.quantity),
+            date: t.tradeTimestamp,
+          ));
+        } else {
+          cashflows.add((
+            amount: t.pricePerUnit * t.quantity,
+            date: t.tradeTimestamp,
+          ));
+        }
+      }
+      if (totalCurrentValue > 0) {
+        cashflows.add((
+          amount: totalCurrentValue,
+          date: DateTime.now(),
+        ));
+      }
+      portfolioXirr = XirrCalc.calculate(cashflows);
+    } catch (_) {}
+
     return PortfolioSnapshot(
       holdings: analysed,
       totalInvested: totalInvested,
@@ -376,6 +462,8 @@ class PortfolioAnalyticsEngine {
       worstByReturn: worstByReturn,
       bestByAbsoluteProfit: bestByAbsoluteProfit,
       largestByWeight: largestByWeight,
+      xirr: portfolioXirr,
+      trades: trades,
     );
   }
 

@@ -1,6 +1,8 @@
 import 'package:uuid/uuid.dart';
 import 'package:drift/drift.dart';
+import 'package:flutter/foundation.dart';
 import '../../database/app_database.dart';
+import '../../market/nse_price_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PortfolioSnapshotService — Point-in-Time Portfolio State
@@ -36,10 +38,25 @@ class PortfolioSnapshotService {
       0, (sum, h) => sum + h.investedValue,
     );
 
-    // Current market value is not available without live prices —
-    // use invested value as placeholder. Price history integration
-    // will improve this later.
-    final currentValue = totalInvested;
+    // Fetch live prices for accurate snapshot
+    final symbols = holdings
+        .map((h) => h.instrumentSymbol.toUpperCase())
+        .toList();
+    double currentValue = 0;
+    try {
+      final prices = await NsePriceService.getPrices(symbols);
+      for (final h in holdings) {
+        final sym = h.instrumentSymbol.toUpperCase();
+        final cmp = prices[sym];
+        currentValue += cmp != null
+            ? cmp * h.totalQuantity
+            : h.investedValue; // fallback to invested if no price
+      }
+    } catch (e) {
+      debugPrint('PortfolioSnapshotService: price fetch failed: $e');
+      currentValue = totalInvested; // fallback entirely
+    }
+
     final unrealizedPnl = currentValue - totalInvested;
 
     // 3. Compute realized P&L (simplified: from sell trades)
@@ -92,3 +109,4 @@ class PortfolioSnapshotService {
         .getSingleOrNull();
   }
 }
+

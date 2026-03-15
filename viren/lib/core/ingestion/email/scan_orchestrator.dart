@@ -6,6 +6,8 @@ import '../../database/enums.dart';
 import '../../database/repositories/trade_repository.dart';
 import '../../database/daos/import_dao.dart';
 import '../../auth/auth_service.dart';
+import '../../database/app_database.dart';
+import '../../intelligence/confidence_calculator.dart';
 import 'broker_email_parser.dart';
 import 'scanner_controller.dart';
 import 'attachment_handler.dart';
@@ -255,6 +257,8 @@ class ScanCounters {
 class ScanOrchestrator {
   final TradeRepository _tradeRepo;
   final ImportDao _importDao;
+  final AppDatabase _db;
+  final ConfidenceCalculator _confidenceCalculator;
 
   final _controller = StreamController<ScanEvent>.broadcast();
   Stream<ScanEvent> get events => _controller.stream;
@@ -272,8 +276,12 @@ class ScanOrchestrator {
   ScanOrchestrator({
     required TradeRepository tradeRepository,
     required ImportDao importDao,
+    required AppDatabase db,
+    required ConfidenceCalculator confidenceCalculator,
   })  : _tradeRepo = tradeRepository,
-        _importDao = importDao;
+        _importDao = importDao,
+        _db = db,
+        _confidenceCalculator = confidenceCalculator;
 
   /// Provide the PAN from the UI side. Resumes the pipeline.
   void submitPan(String pan) {
@@ -908,6 +916,8 @@ class ScanOrchestrator {
         final importService = EmailImportService(
           tradeRepository: _tradeRepo,
           importDao: _importDao,
+          db: _db,
+          confidenceCalculator: _confidenceCalculator,
         );
         importResult = await importService.commit(preview);
         _counters = _counters.copyWith(

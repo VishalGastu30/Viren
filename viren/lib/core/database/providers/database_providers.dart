@@ -36,6 +36,10 @@ import '../../intelligence/ai/ollama_ai_provider.dart';
 // ── Sync ─────────────────────────────────────────────────────────────────────
 import '../../sync/encrypted_backup_service.dart';
 
+// ── Portfolio Analytics ─────────────────────────────────────────────────────────
+import '../../../features/assistant/portfolio_analytics_engine.dart'
+    as analytics;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Database Providers
 //
@@ -168,6 +172,8 @@ final emailImportServiceProvider = Provider<EmailImportService>((ref) {
   return EmailImportService(
     tradeRepository: ref.watch(tradeRepositoryProvider),
     importDao: ref.watch(importDaoProvider),
+    db: ref.watch(appDatabaseProvider),
+    confidenceCalculator: ref.watch(confidenceCalculatorProvider),
   );
 });
 
@@ -208,6 +214,17 @@ final dataSanitizerProvider = Provider<DataSanitizer>((ref) {
 
 final aiGuardrailsProvider = Provider<AiGuardrails>((ref) {
   return AiGuardrails();
+});
+
+// ── Portfolio Analytics ───────────────────────────────────────────────────────
+
+final portfolioSnapshotAnalyticsProvider =
+    FutureProvider.autoDispose<analytics.PortfolioSnapshot>((ref) async {
+  // Watch trades so this recomputes when trades change
+  ref.watch(allTradesProvider);
+  final db = ref.watch(appDatabaseProvider);
+  final engine = analytics.PortfolioAnalyticsEngine(db);
+  return engine.buildSnapshot();
 });
 
 // ── Sync / Backup ─────────────────────────────────────────────────────────────

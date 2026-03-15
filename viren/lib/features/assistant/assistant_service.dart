@@ -219,6 +219,8 @@ class AssistantService {
         hasPriceData: false,
         today: '',
         profitableCount: 0,
+        xirr: null,
+        trades: [],
       );
 
   // ── Sanitise history ──────────────────────────────────────────────────────

@@ -153,10 +153,14 @@ class _ScanProgressScreenState extends ConsumerState<ScanProgressScreen>
   void _startOrchestrator(AuthService authService) {
     final tradeRepo = ref.read(tradeRepositoryProvider);
     final importDao = ref.read(importDaoProvider);
+    final db = ref.read(appDatabaseProvider);
+    final confidenceCalculator = ref.read(confidenceCalculatorProvider);
 
     _orchestrator = ScanOrchestrator(
       tradeRepository: tradeRepo,
       importDao: importDao,
+      db: db,
+      confidenceCalculator: confidenceCalculator,
     );
 
     _subscription = _orchestrator!.events.listen(_handleEvent);

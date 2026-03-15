@@ -9,8 +9,10 @@ import '../../database/app_database.dart';
 import '../../database/repositories/trade_repository.dart';
 import '../../auth/auth_service.dart';
 import 'email_import_service.dart';
-import '../../security/field_encryptor.dart';
 import '../../integrity/integrity_service.dart';
+import '../../security/field_encryptor.dart';
+import '../../database/repositories/behavior_repository.dart';
+import '../../intelligence/confidence_calculator.dart';
 import '../../intelligence/stats/portfolio_snapshot_service.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -48,6 +50,8 @@ void callbackDispatcher() {
         snapshotService: snapshotService,
       );
       final importDao = database.importDao;
+      final behaviorRepo = BehaviorRepository(database.behaviorDao);
+      final confidenceCalculator = ConfidenceCalculator(behaviorRepo);
 
       // Initialize notifications
       final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
@@ -72,7 +76,12 @@ void callbackDispatcher() {
       }
 
       // 3. Pipeline Execution
-      final importService = EmailImportService(tradeRepository: tradeRepo, importDao: importDao);
+      final importService = EmailImportService(
+        tradeRepository: tradeRepo, 
+        importDao: importDao,
+        db: database,
+        confidenceCalculator: confidenceCalculator,
+      );
       
       // Scan for the last 7 days to catch any recent offline broker emails
       final since = DateTime.now().subtract(const Duration(days: 7));

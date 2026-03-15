@@ -282,13 +282,46 @@ class ScannerController {
 
   DateTime? _parseDate(String dateStr) {
     if (dateStr.isEmpty) return null;
+
+    // Remove trailing timezone name in parentheses e.g. "(IST)"
+    final cleaned = dateStr
+        .replaceAll(RegExp(r'\s*\([^)]*\)\s*$'), '')
+        .trim();
+
+    // Try standard ISO parse first
+    try { return DateTime.parse(cleaned); } catch (_) {}
+
+    // RFC 2822 format: "Thu, 05 Mar 2026 14:32:11 +0530"
+    // or without day name: "05 Mar 2026 14:32:11 +0530"
     try {
-      return DateTime.parse(dateStr);
+      // Strip leading weekday if present e.g. "Thu, "
+      final withoutDay = cleaned.replaceFirst(
+          RegExp(r'^[A-Za-z]{3},\s*'), '');
+
+      // Expected: "05 Mar 2026 14:32:11 +0530"
+      final parts = withoutDay.split(' ');
+      if (parts.length >= 4) {
+        final day   = parts[0].padLeft(2, '0');
+        final month = _monthToNumber(parts[1]);
+        final year  = parts[2];
+        final time  = parts[3];
+        final tz    = parts.length >= 5 ? parts[4] : '+0000';
+
+        // Assemble ISO 8601 and parse
+        final iso = '$year-$month-${day}T$time$tz';
+        return DateTime.parse(iso);
+      }
     } catch (_) {}
-    try {
-      final cleaned = dateStr.replaceAll(RegExp(r'\s*\([^)]*\)\s*$'), '').trim();
-      return DateTime.parse(cleaned);
-    } catch (_) {}
+
     return null;
+  }
+
+  String _monthToNumber(String month) {
+    const months = {
+      'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04',
+      'may': '05', 'jun': '06', 'jul': '07', 'aug': '08',
+      'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12',
+    };
+    return months[month.toLowerCase()] ?? '01';
   }
 }

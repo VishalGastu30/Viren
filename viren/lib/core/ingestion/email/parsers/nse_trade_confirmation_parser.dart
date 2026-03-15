@@ -91,7 +91,7 @@ class NseTradeConfirmationParser implements DocumentContentParser {
           tradeType: tradeType,
           quantity: qty,
           pricePerUnit: price,
-          tradeDate: emailDate,
+          tradeDate: emailDate.subtract(const Duration(days: 1)),
           broker: 'NSE Direct',
           confidence: 80, // NSE Direct Regex Baseline
           sourceMessageHash: attachmentHash, 

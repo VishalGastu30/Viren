@@ -1548,8 +1548,8 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
                     t.trade.tradeType ==
                         db_enums.TradeType.buy)
                 .toList()
-              ..sort((a, b) => a.trade.tradeTimestamp
-                  .compareTo(b.trade.tradeTimestamp));
+              ..sort((a, b) => b.trade.tradeTimestamp
+                  .compareTo(a.trade.tradeTimestamp));
 
             if (buys.isEmpty) return const SizedBox.shrink();
 

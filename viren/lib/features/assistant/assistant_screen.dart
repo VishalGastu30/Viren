@@ -54,10 +54,10 @@ class AssistantScreen extends ConsumerStatefulWidget {
   const AssistantScreen({super.key});
 
   @override
-  ConsumerState<AssistantScreen> createState() => _AssistantScreenState();
+  ConsumerState<AssistantScreen> createState() => AssistantScreenState();
 }
 
-class _AssistantScreenState extends ConsumerState<AssistantScreen>
+class AssistantScreenState extends ConsumerState<AssistantScreen>
     with TickerProviderStateMixin {
   bool _isModelReady = false;
   bool _showSlideToUnlock = false;
@@ -69,6 +69,10 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
   String _portfolioContext = '';
   String _memoryContext = '';
   PortfolioSnapshot? _snapshot;
+
+  // Holds a message received before portfolio context or model was ready.
+  // Consumed and sent once both _loadPortfolioContext and _checkModelReady complete.
+  String? _pendingExternalMessage;
 
   bool _showThinking = false;
   String _thinkingPhrase = '';
@@ -151,6 +155,15 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
         return;
       }
       setState(() => _isModelReady = true);
+
+      // Flush any message that arrived before model was ready
+      if (_pendingExternalMessage != null && _portfolioContext.isNotEmpty) {
+        final msg = _pendingExternalMessage!;
+        _pendingExternalMessage = null;
+        Future.delayed(const Duration(milliseconds: 100), () {
+          if (mounted) _sendMessage(msg);
+        });
+      }
     }
   }
 
@@ -172,7 +185,33 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
         _portfolioContext = ctx;
         _memoryContext = memoryCtx;
       });
+
+      // If a message arrived before context was ready, send it now
+      if (_pendingExternalMessage != null && _isModelReady) {
+        final msg = _pendingExternalMessage!;
+        _pendingExternalMessage = null;
+        // Small delay to let setState complete
+        Future.delayed(const Duration(milliseconds: 100), () {
+          if (mounted) _sendMessage(msg);
+        });
+      }
     }
+  }
+
+  /// Called by VirenRouter when Ask Viren fires from an insight card.
+  /// Sends a message into the current conversation without rebuilding
+  /// the screen or destroying any state.
+  void receiveMessage(String message) {
+    if (!mounted) return;
+    if (message.trim().isEmpty) return;
+
+    // If portfolio context isn't ready yet, store and wait.
+    if (_portfolioContext.isEmpty || !_isModelReady) {
+      _pendingExternalMessage = message;
+      return;
+    }
+
+    _sendMessage(message);
   }
 
   Future<void> _selectConversation(Conversation conv) async {

@@ -1,37 +1,45 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/navigation/deep_link_service.dart';
 
 import '../core/theme/design_tokens.dart';
 import '../core/animations/animation_presets.dart';
 import '../features/dashboard/dashboard_screen.dart';
 import '../features/holdings/holdings_list_screen.dart';
-import '../features/alerts/alerts_screen.dart';
+import '../features/insights/insights_screen.dart';
 import '../features/assistant/assistant_screen.dart';
 import '../features/import/import_center_screen.dart';
 import '../features/import/manual_trade_entry_screen.dart';
 import '../features/scan/scan_progress_screen.dart';
 
-class VirenRouter extends StatefulWidget {
+class VirenRouter extends ConsumerStatefulWidget {
   const VirenRouter({super.key});
 
   @override
-  State<VirenRouter> createState() => _VirenRouterState();
+  ConsumerState<VirenRouter> createState() => _VirenRouterState();
 }
 
-class _VirenRouterState extends State<VirenRouter> {
+class _VirenRouterState extends ConsumerState<VirenRouter> {
   late final PageController _pageController;
   int _currentIndex = 0;
 
-  final List<Widget> _screens = [
-    const DashboardScreen(),
-    const HoldingsListScreen(),
-    const AlertsScreen(),
-    const AssistantScreen(),
-  ];
+  // Stable key for AssistantScreen — never changes, never rebuilds the screen.
+  final _assistantKey = GlobalKey<AssistantScreenState>();
+
+  // Stable screens list — built once in initState, never recreated
+  // so Flutter never destroys and recreates AssistantScreen on tab switches.
+  late final List<Widget> _screens;
 
   @override
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: _currentIndex);
+    _screens = [
+      const DashboardScreen(),
+      const HoldingsListScreen(),
+      const InsightsScreen(),
+      AssistantScreen(key: _assistantKey), // no initialMessage, no ValueKey
+    ];
   }
 
   @override
@@ -46,6 +54,25 @@ class _VirenRouterState extends State<VirenRouter> {
     });
   }
 
+  void _navigateToAssistant({String? prompt}) {
+    // Switch to the assistant tab
+    _pageController.animateToPage(
+      kTabAssistant,
+      duration: AnimationPresets.durationNormal,
+      curve: AnimationPresets.entrance,
+    );
+
+    // If there's a prompt, call the method on the existing screen state.
+    // Small delay ensures the tab animation has started and the state is mounted.
+    if (prompt != null) {
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) {
+          _assistantKey.currentState?.receiveMessage(prompt);
+        }
+      });
+    }
+  }
+
   void _onBottomNavTapped(int index) {
     _pageController.animateToPage(
       index,
@@ -56,16 +83,33 @@ class _VirenRouterState extends State<VirenRouter> {
 
   @override
   Widget build(BuildContext context) {
+    // Consume deep link targets from notification taps
+    ref.listen<DeepLinkTarget?>(deepLinkProvider, (_, target) {
+      if (target == null) return;
+
+      if (target.tab == kTabAssistant && target.payload != null) {
+        _navigateToAssistant(prompt: target.payload);
+      } else {
+        _pageController.animateToPage(
+          target.tab,
+          duration: AnimationPresets.durationNormal,
+          curve: AnimationPresets.entrance,
+        );
+      }
+
+      ref.read(deepLinkProvider.notifier).consume();
+    });
+
     return Scaffold(
       backgroundColor: DesignTokens.graphiteBase,
       body: PageView(
         controller: _pageController,
         onPageChanged: _onPageChanged,
         physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()), 
-        children: _screens.map((screen) {
+        children: _screens.asMap().entries.map((entry) {
           return TickerMode(
-            enabled: _currentIndex == _screens.indexOf(screen),
-            child: screen,
+            enabled: _currentIndex == entry.key,
+            child: entry.value,
           );
         }).toList(),
       ),

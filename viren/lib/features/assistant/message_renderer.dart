@@ -114,9 +114,13 @@ class _ResponseParser {
         .replaceAll(r'\t', ' ')
         .trim();
 
-    // Strip markdown bold (**text**) and italic (*text*) the model sometimes emits
-    normalised = normalised.replaceAll(RegExp(r'\*\*(.+?)\*\*'), r'$1');
-    normalised = normalised.replaceAll(RegExp(r'\*(.+?)\*'), r'$1');
+    // Strip markdown bold/italic using replaceAllMapped (Dart-safe)
+    normalised = normalised.replaceAllMapped(
+        RegExp(r'\*\*(.+?)\*\*'), (m) => m.group(1) ?? '');
+    normalised = normalised.replaceAllMapped(
+        RegExp(r'\*(.+?)\*'), (m) => m.group(1) ?? '');
+    // Clean up any persisted $1 artifacts
+    normalised = normalised.replaceAll(r'$1', '');
 
     // ── FIX 6: Strip markdown code fences ───────────────────────────────────
     // Model sometimes outputs ```table ... ``` or ```...```

@@ -270,9 +270,13 @@ class AssistantService {
     text = text.replaceAll(conversationPattern, '').trim();
     text = _stripRolePrefix(text);
 
-    // Strip markdown bold/italic
-    text = text.replaceAll(RegExp(r'\*\*(.+?)\*\*'), r'$1');
-    text = text.replaceAll(RegExp(r'\*(.+?)\*'), r'$1');
+    // Strip markdown bold/italic using replaceAllMapped (Dart-safe)
+    text = text.replaceAllMapped(
+        RegExp(r'\*\*(.+?)\*\*'), (m) => m.group(1) ?? '');
+    text = text.replaceAllMapped(
+        RegExp(r'\*(.+?)\*'), (m) => m.group(1) ?? '');
+    // Also strip any literal $1 artifacts from previous bad builds
+    text = text.replaceAll(r'$1', '');
 
     // Safe echo removal — only strip if line has no financial data
     final firstLine = text.split('\n').first.trim();

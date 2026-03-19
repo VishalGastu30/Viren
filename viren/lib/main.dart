@@ -12,6 +12,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'core/ingestion/email/background_sync_service.dart';
 import 'core/market/market_knowledge_service.dart';
 
+import 'package:workmanager/workmanager.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'core/insights/insight_worker.dart' as insights;
+import 'core/insights/notification_service.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -40,13 +45,41 @@ void main() async {
   // Initialize Market Knowledge for Assistant
   await MarketKnowledgeService.init();
 
+  // --- Phase 1: Insights & Alerts Initialization ---
+  
+  // Initialize WorkManager for insights
+  await Workmanager().initialize(
+    insights.callbackDispatcher,
+  );
+
+  // Initialize notifications
+  await NotificationService.initialize();
+
+  // Register background insight worker
+  await insights.registerInsightWorker();
+
+  // Request notification permission (Android 13+)
+  final plugin = FlutterLocalNotificationsPlugin();
+  await plugin
+      .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>()
+      ?.requestNotificationsPermission();
+
+  // Create the global container BEFORE runApp.
+  // This lets NotificationService write to Riverpod state
+  // from its static tap callback (which has no BuildContext).
+  final container = ProviderContainer(
+    overrides: [
+      sharedPreferencesProvider.overrideWithValue(prefs),
+      keyManagerProvider.overrideWithValue(keyManager),
+      appDatabaseProvider.overrideWithValue(database),
+    ],
+  );
+  NotificationService.setContainer(container);
+
   runApp(
-    ProviderScope(
-      overrides: [
-        sharedPreferencesProvider.overrideWithValue(prefs),
-        keyManagerProvider.overrideWithValue(keyManager),
-        appDatabaseProvider.overrideWithValue(database),
-      ],
+    UncontrolledProviderScope(
+      container: container,
       child: const VirenApp(),
     ),
   );

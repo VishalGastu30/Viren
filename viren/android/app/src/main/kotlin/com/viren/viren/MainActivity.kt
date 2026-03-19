@@ -23,6 +23,7 @@ import kotlinx.coroutines.tasks.await
 import org.json.JSONObject
 import java.io.File
 
+
 class MainActivity : FlutterFragmentActivity() {
 
     private val CHANNEL = "com.viren.viren/pdf_crypto"
@@ -39,6 +40,8 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+
 
         PDFBoxResourceLoader.init(applicationContext)
 

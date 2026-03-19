@@ -14,6 +14,10 @@ import '../../core/market/market_data_service.dart';
 import '../../core/market/market_status.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/utils/currency_formatter.dart';
+import '../../core/insights/emotion_recall_service.dart';
+import 'dart:convert';
+import 'widgets/price_alert_sheet.dart';
+import 'widgets/trade_note_dialog.dart';
 
 // ─── XIRR Calculator ──────────────────────────────────────────────────────────
 class _XirrCalc {
@@ -290,6 +294,10 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
   OhlcvCandle? _touchedCandle;
   int? _lastHapticIndex;
 
+  // Maps tradeId → note text for the Investment Journey note icons.
+  // Loaded once on initState and updated when user saves/deletes a note.
+  final Map<String, String> _tradeNotes = {};
+
   Timer? _refreshTimer;
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
@@ -328,6 +336,7 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
     );
     _loadData();
     _setupAutoRefresh();
+    _loadTradeNotes();
   }
 
   @override
@@ -346,6 +355,27 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
         if (mounted) _loadQuote();
       });
     }
+  }
+
+  Future<void> _loadTradeNotes() async {
+    final db = ref.read(appDatabaseProvider);
+    final service = EmotionRecallService(db);
+    final notes = await service.getNotesForSymbol(
+        widget.holding.instrumentSymbol.toUpperCase());
+
+    final map = <String, String>{};
+    for (final note in notes) {
+      try {
+        final data =
+            jsonDecode(note.triggerData) as Map<String, dynamic>;
+        final tradeId = data['tradeId'] as String?;
+        if (tradeId != null) {
+          map[tradeId] = note.description;
+        }
+      } catch (_) {}
+    }
+
+    if (mounted) setState(() => _tradeNotes.addAll(map));
   }
 
   Future<void> _loadData() =>
@@ -506,6 +536,20 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
               ?.copyWith(fontWeight: FontWeight.w600),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.notifications_outlined,
+                color: DesignTokens.textMediumContrast),
+            tooltip: 'Set price alert',
+            onPressed: () => showModalBottomSheet(
+              context: context,
+              backgroundColor: Colors.transparent,
+              isScrollControlled: true,
+              builder: (_) => PriceAlertSheet(
+                holding: widget.holding,
+                currentPrice: _quote?.currentPrice,
+              ),
+            ),
+          ),
           _MarketStatusBadge(
               status: status,
               pulseAnimation: _pulseAnimation),
@@ -1646,6 +1690,41 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
                                       ),
                                     ),
                                   ),
+                                  const SizedBox(width: 8),
+                                  GestureDetector(
+                                    onTap: () async {
+                                      final existingNote = _tradeNotes[t.id];
+                                      final result = await showDialog<String>(
+                                        context: context,
+                                        builder: (_) => TradeNoteDialog(
+                                          tradeId: t.id,
+                                          symbol: widget.holding.instrumentSymbol.toUpperCase(),
+                                          tradeDate: t.tradeTimestamp,
+                                          tradePrice: t.pricePerUnit,
+                                          existingNote: existingNote,
+                                        ),
+                                      );
+                                      if (result != null) {
+                                        setState(() {
+                                          if (result.isEmpty) {
+                                            _tradeNotes.remove(t.id);
+                                          } else {
+                                            _tradeNotes[t.id] = result;
+                                          }
+                                        });
+                                      }
+                                    },
+                                    child: Icon(
+                                      _tradeNotes.containsKey(t.id)
+                                          ? Icons.sticky_note_2_rounded
+                                          : Icons.sticky_note_2_outlined,
+                                      size: 16,
+                                      color: _tradeNotes.containsKey(t.id)
+                                          ? DesignTokens.ashGold
+                                          : DesignTokens.textMediumContrast
+                                              .withValues(alpha: 0.3),
+                                    ),
+                                  ),
                                 ],
                               ),
                               const SizedBox(height: 3),
@@ -1671,6 +1750,39 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
                                   ),
                                 ],
                               ),
+                              if (_tradeNotes.containsKey(t.id)) ...[
+                                const SizedBox(height: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 10, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: DesignTokens.ashGold.withValues(alpha: 0.06),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                        color: DesignTokens.ashGold.withValues(alpha: 0.15)),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.format_quote_rounded,
+                                          size: 12,
+                                          color: DesignTokens.ashGold.withValues(alpha: 0.6)),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: Text(
+                                          _tradeNotes[t.id]!,
+                                          style: TextStyle(
+                                            color: DesignTokens.ashGold.withValues(alpha: 0.8),
+                                            fontSize: 11,
+                                            fontStyle: FontStyle.italic,
+                                          ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         ),

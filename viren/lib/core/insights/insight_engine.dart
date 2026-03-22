@@ -11,6 +11,7 @@ import 'macro_engine.dart';
 import 'pattern_engine.dart';
 import 'behaviour_engine.dart';
 import 'price_alert_watcher.dart';
+import 'storage_cleaner.dart';
 import '../database/enums.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -116,12 +117,28 @@ class InsightEngine {
     try {
       await _sendPendingNotifications();
     } catch (_) {}
+
+    // Daily maintenance
+    try {
+      final cleaner = StorageCleaner(_db);
+      await cleaner.run();
+    } catch (_) {}
+  }
+
+  /// Bypass de-duplication for manual refreshes (pull down on Insights Screen).
+  Future<void> runForceCheck() async {
+    try { await _runPriceIntelligence(force: true); } catch (_) {}
+    try { await _runNewsIntelligence(); } catch (_) {}
+    try { await PatternEngine(_db).run(); } catch (_) {}
+    try { await MacroEngine(_db).run(); } catch (_) {}
+    try { await BehaviourEngine(_db).run(currentPrices: _lastFetchedPrices); } catch (_) {}
+    try { await _runBehaviourIntelligence(); } catch (_) {}
   }
 
   // ── Layer 1: Price Intelligence ───────────────────────────────
 
-  Future<void> _runPriceIntelligence() async {
-    if (!isMarketHours()) return;
+  Future<void> _runPriceIntelligence({bool force = false}) async {
+    if (!force && !isMarketHours()) return;
 
     final holdings = await _db.select(_db.holdings).get();
     if (holdings.isEmpty) return;

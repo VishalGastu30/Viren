@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 import '../database/app_database.dart';
 import '../database/enums.dart';
+import '../market/symbol_classifier.dart';
 import 'rss_fetcher.dart';
 import 'alert_trigger_service.dart';
 
@@ -36,15 +37,7 @@ class MacroEngine {
         'https://economictimes.indiatimes.com/markets/rss.cms',
   };
 
-  // Macro event keywords — only process items containing these terms
-  // Prevents Qwen from reasoning about irrelevant corporate news
-  static const _macroKeywords = [
-    'repo rate', 'rbi', 'sebi', 'inflation', 'cpi', 'gdp',
-    'fed', 'federal reserve', 'rate cut', 'rate hike',
-    'monetary policy', 'fiscal', 'budget', 'iip',
-    'gold', 'silver', 'commodity', 'rupee', 'dollar',
-    'nifty', 'sensex', 'market rally', 'market crash',
-  ];
+
 
   MacroEngine(this._db) {
     _alertService = AlertTriggerService(_db);
@@ -60,6 +53,7 @@ class MacroEngine {
     if (holdings.isEmpty) return;
 
     final portfolioContext = _buildPortfolioContext(holdings);
+    final dynamicKeywords = _buildDynamicKeywords(holdings);
 
     String? modelPath;
     try {
@@ -80,7 +74,7 @@ class MacroEngine {
     int qwenCallCount = 0;
     for (final item in macroItems) {
       if (qwenCallCount >= 3) break;
-      if (!_isMacroRelevant(item)) continue;
+      if (!_isMacroRelevant(item, dynamicKeywords)) continue;
 
       try {
         final insight = await _reasonAboutMacroEvent(
@@ -95,6 +89,7 @@ class MacroEngine {
             affectedSymbol: insight['symbol'] as String?,
             source: item.source,
             relevanceScore: insight['score'] as int,
+            // You may update createMacroAlert locally to accept signal if needed.
           );
           qwenCallCount++;
         }
@@ -191,9 +186,9 @@ class MacroEngine {
   }
 
   /// Quick keyword filter — only send macro-relevant items to Qwen.
-  bool _isMacroRelevant(RssItem item) {
+  bool _isMacroRelevant(RssItem item, List<String> keywords) {
     final text = item.fullText.toLowerCase();
-    return _macroKeywords.any((kw) => text.contains(kw));
+    return keywords.any((kw) => text.contains(kw));
   }
 
   /// Asks Qwen to reason about a macro event against the user's
@@ -203,43 +198,47 @@ class MacroEngine {
     required String portfolioContext,
     required String modelPath,
   }) async {
-    final prompt = '''You are a financial analyst helping a retail investor understand how a macro event affects their specific portfolio.
+    final prompt =
+        '''You are an experienced Indian stock market investor with 20 years of experience.
+A retail investor's portfolio and a news event are shown below.
+Your job: reason like a seasoned investor — not a robot.
 
-Portfolio: $portfolioContext
+Portfolio:
+$portfolioContext
 
-Macro event: "${newsItem.title}"
+News: "${newsItem.title}"
 Details: "${newsItem.description}"
 
 Answer in this exact JSON format only, no other text:
-{"relevant": true/false, "symbol": "AFFECTED_SYMBOL_OR_null", "score": 1-10, "insight": "one sentence, specific to their holdings"}
+{"relevant": true/false, "symbol": "MOST_AFFECTED_SYMBOL_OR_null", "score": 1-10, "signal": "BUY_OPPORTUNITY/RISK/HOLD/NEUTRAL", "insight": "one sentence max"}
 
 Rules:
-- relevant: true only if this macro event has a clear, direct channel of impact to one or more of their holdings
-- symbol: the most affected holding symbol (e.g. GOLDBEES, NIFTYBEES). Use null if portfolio-wide
-- score: 1-10 macro significance (8+ = send notification immediately)
-- insight: be specific to their position — mention their holding by name, explain the direction and mechanism
+- relevant: true if this news has a clear, direct impact channel to any holding
+- symbol: the most affected holding symbol from the portfolio
+- score: 1-10 significance (8+ means notify immediately)
+- signal: BUY_OPPORTUNITY if this creates a good entry, RISK if it threatens the position, HOLD if it reinforces holding, NEUTRAL if informational only
+- insight: write like a trusted advisor — mention the holding by name, the price context, and what an experienced investor would think about it. Be specific, not generic.
 
-If the event has no clear connection to their specific holdings, return: {"relevant": false, "symbol": null, "score": 0, "insight": ""}''';
+If not relevant to any holding: {"relevant": false, "symbol": null, "score": 0, "signal": "NEUTRAL", "insight": ""}''';
 
     try {
       final response = await _llmChannel.invokeMethod<String>('chat', {
         'prompt': prompt,
         'modelPath': modelPath,
       });
-
       if (response == null || response.isEmpty) return null;
-
-      final cleaned =
-          response.replaceAll('```json', '').replaceAll('```', '').trim();
+      final cleaned = response
+          .replaceAll('```json', '')
+          .replaceAll('```', '')
+          .trim();
       final parsed = jsonDecode(cleaned) as Map<String, dynamic>;
-
       if (parsed['relevant'] != true) return null;
       if ((parsed['score'] as int? ?? 0) < 5) return null;
-
       return {
         'symbol': parsed['symbol'] as String?,
         'insight': parsed['insight'] as String? ?? newsItem.title,
         'score': parsed['score'] as int? ?? 5,
+        'signal': parsed['signal'] as String? ?? 'NEUTRAL',
       };
     } catch (_) {
       return null;
@@ -247,16 +246,32 @@ If the event has no clear connection to their specific holdings, return: {"relev
   }
 
   String _buildPortfolioContext(List<Holding> holdings) {
-    const nameMap = {
-      'NIFTYBEES': 'NIFTYBEES (Nifty 50 index ETF — tracks Indian large-cap equity)',
-      'GOLDBEES': 'GOLDBEES (Gold ETF — tracks domestic gold price)',
-      'SILVERIETF': 'SILVERIETF (Silver ETF — tracks domestic silver price)',
-      'YESBANK': 'YESBANK (Yes Bank equity — mid-cap private sector bank)',
+    return SymbolClassifier.buildPortfolioQwenContext(holdings);
+  }
+
+  List<String> _buildDynamicKeywords(List<Holding> holdings) {
+    final keywords = <String>{
+      // Always watch these macro fundamentals
+      'repo rate', 'rbi', 'sebi', 'inflation', 'cpi', 'gdp',
+      'fed', 'federal reserve', 'rate cut', 'rate hike',
+      'monetary policy', 'fiscal', 'budget', 'iip',
+      'rupee', 'dollar', 'nifty', 'sensex',
+      'gift nifty', 'sgx nifty',  // overnight indicator
+      // US markets — relevant for NIFTYBEES and IT stocks
+      's&p 500', 'nasdaq', 'dow jones', 'wall street',
     };
-    return holdings.map((h) {
-      final sym = h.instrumentSymbol.toUpperCase();
-      final name = nameMap[sym] ?? sym;
-      return '$name (invested ₹${h.investedValue.toStringAsFixed(0)}, ${h.totalQuantity.toStringAsFixed(0)} units)';
-    }).join('; ');
+
+    // Add asset-class-specific keywords based on actual holdings
+    for (final h in holdings) {
+      final info = SymbolClassifier.classify(h.instrumentSymbol);
+      for (final driver in info.macroDrIvers) {
+        // Extract key nouns from the driver description
+        keywords.addAll(driver.toLowerCase().split(' ')
+            .where((w) => w.length > 4));
+      }
+      keywords.addAll(info.correlations.map((c) => c.toLowerCase()));
+    }
+
+    return keywords.toList();
   }
 }

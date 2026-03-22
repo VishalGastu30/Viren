@@ -219,7 +219,7 @@ final aiGuardrailsProvider = Provider<AiGuardrails>((ref) {
 // ── Portfolio Analytics ───────────────────────────────────────────────────────
 
 final portfolioSnapshotAnalyticsProvider =
-    FutureProvider.autoDispose<analytics.PortfolioSnapshot>((ref) async {
+    FutureProvider<analytics.PortfolioSnapshot>((ref) async {
   // Watch trades so this recomputes when trades change
   ref.watch(allTradesProvider);
   final db = ref.watch(appDatabaseProvider);

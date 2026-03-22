@@ -18,11 +18,13 @@ class InsightCard extends ConsumerWidget {
   final Alert alert;
   final bool isStarred;
   final bool showAskViren;
+  final bool isExpanded;
 
   const InsightCard({
     required this.alert,
     this.isStarred = false,
     this.showAskViren = true,
+    this.isExpanded = false,
     super.key,
   });
 
@@ -106,14 +108,48 @@ class InsightCard extends ConsumerWidget {
                 ),
           ),
           const SizedBox(height: 6),
-          Text(
-            alert.description,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: DesignTokens.textMediumContrast,
-                  height: 1.4,
+          AnimatedSize(
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeInOutCubic,
+            alignment: Alignment.topCenter,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  alert.description,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: DesignTokens.textMediumContrast,
+                        height: 1.5,
+                      ),
+                  maxLines: isExpanded ? null : 3,
+                  overflow: isExpanded ? TextOverflow.clip : TextOverflow.ellipsis,
                 ),
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
+                if (!isExpanded && alert.description.length > 100)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      'Tap to expand',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: typeColor.withValues(alpha: 0.8),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  )
+                else if (isExpanded)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      'Tap to collapse',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: typeColor.withValues(alpha: 0.8),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
           // Confidence bar
           const SizedBox(height: 12),
@@ -216,6 +252,7 @@ class InsightCard extends ConsumerWidget {
       case 'PORTFOLIO_MILESTONE':
       case 'WEEKLY_DIGEST':
       case 'CONSISTENCY_STREAK':
+      case 'MORNING_BRIEFING':
         return DesignTokens.ashGold;
       case 'CONCENTRATION_DRIFT':
       case 'MOMENTUM_ALERT':
@@ -241,6 +278,7 @@ class InsightCard extends ConsumerWidget {
       case 'DCA_OPPORTUNITY':      return 'DCA SIGNAL';
       case 'PORTFOLIO_MILESTONE':  return 'MILESTONE';
       case 'WEEKLY_DIGEST':        return 'WEEKLY';
+      case 'MORNING_BRIEFING':     return 'MORNING';
       case 'BEHAVIOUR_WARNING':    return 'BEHAVIOUR';
       case 'INACTIVITY_ALERT':     return 'REMINDER';
       case 'CONCENTRATION_DRIFT':  return 'RISK SIGNAL';

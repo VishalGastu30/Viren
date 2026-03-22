@@ -60,6 +60,7 @@ class AssistantScreen extends ConsumerStatefulWidget {
 class AssistantScreenState extends ConsumerState<AssistantScreen>
     with TickerProviderStateMixin {
   bool _isModelReady = false;
+  bool _isCheckingModel = true; // ← NEW FLAG
   bool _showSlideToUnlock = false;
 
   final TextEditingController _inputController = TextEditingController();
@@ -142,6 +143,7 @@ class AssistantScreenState extends ConsumerState<AssistantScreen>
   }
 
   Future<void> _checkModelReady() async {
+    setState(() => _isCheckingModel = true);
     final ready = await ModelDownloadService.isModelReady();
     if (!mounted) return;
     if (ready) {
@@ -150,11 +152,15 @@ class AssistantScreenState extends ConsumerState<AssistantScreen>
         await ModelDownloadService.resetModelReady();
         setState(() {
           _isModelReady = false;
+          _isCheckingModel = false;
           _showSlideToUnlock = false;
         });
         return;
       }
-      setState(() => _isModelReady = true);
+      setState(() {
+        _isModelReady = true;
+        _isCheckingModel = false;
+      });
 
       // Flush any message that arrived before model was ready
       if (_pendingExternalMessage != null && _portfolioContext.isNotEmpty) {
@@ -164,37 +170,41 @@ class AssistantScreenState extends ConsumerState<AssistantScreen>
           if (mounted) _sendMessage(msg);
         });
       }
+    } else {
+      setState(() => _isCheckingModel = false);
     }
   }
 
   Future<void> _loadPortfolioContext() async {
+    // Read ALL providers before any async gap.
+    // After an await, the widget may be deactivated and ref is unsafe.
     final db = ref.read(appDatabaseProvider);
+    final memoryService = ref.read(memoryServiceProvider);
 
     final engine = PortfolioAnalyticsEngine(db);
     final snap = await engine.buildSnapshot();
+    if (!mounted) return;
 
     final builder = PortfolioContextBuilder(db);
     final ctx = await builder.build();
+    if (!mounted) return;
 
-    final memoryService = ref.read(memoryServiceProvider);
     final memoryCtx = await memoryService.getMemoryContext();
+    if (!mounted) return;
 
-    if (mounted) {
-      setState(() {
-        _snapshot = snap;
-        _portfolioContext = ctx;
-        _memoryContext = memoryCtx;
+    setState(() {
+      _snapshot = snap;
+      _portfolioContext = ctx;
+      _memoryContext = memoryCtx;
+    });
+
+    // If a message arrived before context was ready, send it now
+    if (_pendingExternalMessage != null && _isModelReady) {
+      final msg = _pendingExternalMessage!;
+      _pendingExternalMessage = null;
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (mounted) _sendMessage(msg);
       });
-
-      // If a message arrived before context was ready, send it now
-      if (_pendingExternalMessage != null && _isModelReady) {
-        final msg = _pendingExternalMessage!;
-        _pendingExternalMessage = null;
-        // Small delay to let setState complete
-        Future.delayed(const Duration(milliseconds: 100), () {
-          if (mounted) _sendMessage(msg);
-        });
-      }
     }
   }
 
@@ -434,12 +444,19 @@ class AssistantScreenState extends ConsumerState<AssistantScreen>
   void _closeDrawer() => _drawerController.reverse();
   bool get _drawerOpen => _drawerController.value > 0.01;
 
+  /// Called by VirenRouter when navigating away from the assistant tab.
+  /// Closes the drawer so it doesn't bleed through during tab transitions.
+  void closeDrawerIfOpen() {
+    if (_drawerOpen) _closeDrawer();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Stack(
       children: [
         _buildMainUI(),
-        if (!_isModelReady && !_showSlideToUnlock) _buildSetupOverlay(),
+        if (!_isCheckingModel && !_isModelReady && !_showSlideToUnlock) 
+          _buildSetupOverlay(),
         if (_showSlideToUnlock) _buildSlideToUnlock(),
       ],
     );

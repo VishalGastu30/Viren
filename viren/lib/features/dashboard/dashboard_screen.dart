@@ -43,7 +43,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     with TickerProviderStateMixin {
   final ScrollController _scrollController = ScrollController();
   bool _isVisible = false;
-  double _scrollOffset = 0.0;
   int _chartViewIndex = 0; // 0=Cumulative, 1=Monthly, 2=By Stock
   int _chartRangeIndex = 3; // 0=3M, 1=6M, 2=1Y, 3=All
 
@@ -53,7 +52,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_onScroll);
     _shimmerController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
@@ -98,13 +96,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     });
   }
 
-  void _onScroll() {
-    setState(() => _scrollOffset = _scrollController.offset);
-  }
-
   @override
   void dispose() {
-    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     _shimmerController.dispose();
     super.dispose();
@@ -176,8 +169,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
   @override
   Widget build(BuildContext context) {
-    final headerParallax = (_scrollOffset * 0.4).clamp(0.0, 100.0);
-    final headerOpacity = (1 - (_scrollOffset / 150)).clamp(0.0, 1.0);
     return Scaffold(
       backgroundColor: DesignTokens.graphiteBase,
       appBar: AppBar(
@@ -186,6 +177,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
         actions: [
           IconButton(
             icon: ref.watch(portfolioSnapshotAnalyticsProvider).when(
+              skipLoadingOnReload: true,
               data: (_) => const Icon(Icons.refresh_rounded,
                   color: DesignTokens.textMediumContrast),
               loading: () => const SizedBox(
@@ -221,79 +213,90 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             controller: _scrollController,
             physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
             slivers: [
-            // ── Parallax Header ──────────────────────────────────────────
+            // ── Parallax Header — AnimatedBuilder avoids full rebuild on scroll ──
             SliverToBoxAdapter(
-              child: Opacity(
-                opacity: headerOpacity,
-                child: Transform.translate(
-                  offset: Offset(0, headerParallax),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              'Portfolio',
-                              style: Theme.of(context).textTheme.displayMedium,
-                            ),
-                            ref.watch(vaultHealthStatusProvider).maybeWhen(
-                                  data: (status) => status.isHealthy
-                                      ? const Icon(Icons.verified_user_outlined,
-                                          color: DesignTokens.obsidianTeal, size: 20)
-                                      : GestureDetector(
-                                          onTap: () => _showTamperDetails(context, status),
-                                          child: const Icon(Icons.warning_amber_rounded,
-                                              color: DesignTokens.crimsonWarning, size: 24),
-                                        ),
-                                  orElse: () => const SizedBox.shrink(),
-                                ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        ref.watch(vaultHealthStatusProvider).maybeWhen(
-                              data: (status) => status.isHealthy
-                                  ? Text(
-                                      'Market looks steady today.',
-                                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                            color: DesignTokens.obsidianTeal,
-                                          ),
-                                    )
-                                  : Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                      decoration: BoxDecoration(
-                                        color: DesignTokens.crimsonWarning.withValues(alpha: 0.1),
-                                        borderRadius: BorderRadius.circular(8),
-                                        border: Border.all(color: DesignTokens.crimsonWarning.withValues(alpha: 0.2)),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          const Icon(Icons.security_rounded,
-                                              size: 14, color: DesignTokens.crimsonWarning),
-                                          const SizedBox(width: 8),
-                                          Text(
-                                            'VAULT TAMPER DETECTED',
-                                            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                                                  color: DesignTokens.crimsonWarning,
-                                                  fontWeight: FontWeight.bold,
-                                                  letterSpacing: 1.2,
-                                                ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                              orElse: () => Text(
-                                'Checking vault integrity...',
-                                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                      color: DesignTokens.textMediumContrast,
-                                    ),
-                              ),
-                            ),
-                      ],
+              child: AnimatedBuilder(
+                animation: _scrollController,
+                builder: (context, child) {
+                  final offset = _scrollController.hasClients
+                      ? _scrollController.offset
+                      : 0.0;
+                  final parallax = (offset * 0.4).clamp(0.0, 100.0);
+                  final opacity = (1 - (offset / 150)).clamp(0.0, 1.0);
+                  return Opacity(
+                    opacity: opacity,
+                    child: Transform.translate(
+                      offset: Offset(0, parallax),
+                      child: child,
                     ),
+                  );
+                },
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Portfolio',
+                            style: Theme.of(context).textTheme.displayMedium,
+                          ),
+                          ref.watch(vaultHealthStatusProvider).maybeWhen(
+                                data: (status) => status.isHealthy
+                                    ? const Icon(Icons.verified_user_outlined,
+                                        color: DesignTokens.obsidianTeal, size: 20)
+                                    : GestureDetector(
+                                        onTap: () => _showTamperDetails(context, status),
+                                        child: const Icon(Icons.warning_amber_rounded,
+                                            color: DesignTokens.crimsonWarning, size: 24),
+                                      ),
+                                orElse: () => const SizedBox.shrink(),
+                              ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      ref.watch(vaultHealthStatusProvider).maybeWhen(
+                            data: (status) => status.isHealthy
+                                ? Text(
+                                    'Market looks steady today.',
+                                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                          color: DesignTokens.obsidianTeal,
+                                        ),
+                                  )
+                                : Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: DesignTokens.crimsonWarning.withValues(alpha: 0.1),
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: DesignTokens.crimsonWarning.withValues(alpha: 0.2)),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.security_rounded,
+                                            size: 14, color: DesignTokens.crimsonWarning),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          'VAULT TAMPER DETECTED',
+                                          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                                                color: DesignTokens.crimsonWarning,
+                                                fontWeight: FontWeight.bold,
+                                                letterSpacing: 1.2,
+                                              ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                            orElse: () => Text(
+                              'Checking vault integrity...',
+                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                    color: DesignTokens.textMediumContrast,
+                                  ),
+                            ),
+                          ),
+                    ],
                   ),
                 ),
               ),
@@ -302,6 +305,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             // ── Analytics-powered sections ───────────────────────────────
             SliverToBoxAdapter(
               child: ref.watch(portfolioSnapshotAnalyticsProvider).when(
+                skipLoadingOnReload: true,
                 data: (snap) => _DashboardContent(
                   snap: snap,
                   isVisible: _isVisible,

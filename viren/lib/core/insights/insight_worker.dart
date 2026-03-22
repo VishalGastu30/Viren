@@ -2,6 +2,9 @@ import 'package:workmanager/workmanager.dart';
 import '../database/app_database.dart';
 import 'insight_engine.dart';
 import 'weekly_digest_service.dart';
+import 'overnight_monitor.dart';
+import 'auto_email_sync_service.dart';
+import 'package:flutter/widgets.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // InsightWorker — WorkManager background task dispatcher.
@@ -19,8 +22,20 @@ const _taskTag = 'viren_insights';
 @pragma('vm:entry-point')
 void callbackDispatcher() {
   Workmanager().executeTask((taskName, inputData) async {
-    // ── Weekly digest task ────────────────────────────────────
-    if (taskName == weeklyDigestTaskName) {
+    WidgetsFlutterBinding.ensureInitialized();
+
+    // ── Morning briefing ──────────────────────────────────────
+    if (taskName == kMorningBriefingTask) {
+      try {
+        final db = AppDatabase();
+        await OvernightMonitor.runMorningBriefing(db);
+        await db.close();
+      } catch (_) {}
+      return Future.value(true);
+    }
+
+    // ── Weekly digest ──────────────────────────────────────────
+    if (taskName == 'WEEKLY_DIGEST') {
       try {
         final db = AppDatabase();
         await WeeklyDigestService.run(db);
@@ -30,11 +45,18 @@ void callbackDispatcher() {
       return Future.value(true);
     }
 
-    // ── Regular insight worker task ───────────────────────────
+    // ── Auto Gmail sync ────────────────────────────────────────
+    if (taskName == kAutoEmailSyncTask) {
+      try {
+        await AutoEmailSyncService.runSync();
+      } catch (_) {}
+      return Future.value(true);
+    }
+
+    // ── Regular insight scan ───────────────────────────────────
     if (taskName != _taskName) return Future.value(true);
 
     try {
-      // Open a fresh DB connection for the background isolate
       final db = AppDatabase();
       final engine = InsightEngine(db);
       await engine.run();
@@ -49,22 +71,24 @@ void callbackDispatcher() {
 /// Registers the periodic background task and weekly digest.
 /// Call once at app startup after Workmanager().initialize().
 Future<void> registerInsightWorker() async {
-  // Register the periodic insight scanning task
+  // Insight scan — every 15 min
   await Workmanager().registerPeriodicTask(
-    _taskName,
-    _taskName,
+    _taskName, _taskName,
     tag: _taskTag,
     frequency: const Duration(minutes: 15),
     constraints: Constraints(
       networkType: NetworkType.connected,
-      requiresBatteryNotLow: true, // don't run on low battery
+      requiresBatteryNotLow: true,
     ),
     existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
     backoffPolicy: BackoffPolicy.linear,
     backoffPolicyDelay: const Duration(minutes: 5),
   );
 
-  // Schedule the weekly digest (Saturday 9 AM IST)
+  // Auto email sync — adaptive timing
+  await AutoEmailSyncService.registerAdaptiveSync();
+
+  // Weekly digest
   await WeeklyDigestService.scheduleNextWeek();
 }
 

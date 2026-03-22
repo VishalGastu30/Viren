@@ -1,5 +1,7 @@
 package com.viren.viren
 
+import android.content.Intent
+import android.os.Build
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
@@ -27,6 +29,7 @@ import java.io.File
 class MainActivity : FlutterFragmentActivity() {
 
     private val CHANNEL = "com.viren.viren/pdf_crypto"
+    private val FOREGROUND_CHANNEL = "com.viren.viren/foreground"
 
     private var llmInference: LlmInference? = null
     private var llmModelPath: String? = null
@@ -175,6 +178,29 @@ class MainActivity : FlutterFragmentActivity() {
                     }
                 }
 
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            FOREGROUND_CHANNEL
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "startWatcher" -> {
+                    val intent = Intent(this, MarketWatcherService::class.java)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(intent)
+                    } else {
+                        startService(intent)
+                    }
+                    result.success(null)
+                }
+                "stopWatcher" -> {
+                    val intent = Intent(this, MarketWatcherService::class.java)
+                    stopService(intent)
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         }

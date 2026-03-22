@@ -9,7 +9,6 @@ import 'core/database/app_database.dart';
 import 'core/database/providers/database_providers.dart';
 import 'core/settings/settings_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'core/ingestion/email/background_sync_service.dart';
 import 'core/market/market_knowledge_service.dart';
 
 import 'package:workmanager/workmanager.dart';
@@ -39,8 +38,7 @@ void main() async {
   final prefs = await SharedPreferences.getInstance();
 
   // Initialize Background Sync (Workmanager + Notifications)
-  await BackgroundSyncService.initialize();
-  await BackgroundSyncService.registerWeeklySync();
+  // BackgroundSyncService superseded by AutoEmailSyncService
 
   // Initialize Market Knowledge for Assistant
   await MarketKnowledgeService.init();

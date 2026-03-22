@@ -10,11 +10,13 @@ import 'package:intl/intl.dart';
 import '../../core/database/app_database.dart';
 import '../../core/database/providers/database_providers.dart';
 import '../../core/database/enums.dart' as db_enums;
+import '../../core/market/live_price_cache.dart';
 import '../../core/market/market_data_service.dart';
 import '../../core/market/market_status.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../core/insights/emotion_recall_service.dart';
+import '../../core/market/symbol_classifier.dart';
 import 'dart:convert';
 import 'widgets/price_alert_sheet.dart';
 import 'widgets/trade_note_dialog.dart';
@@ -299,6 +301,7 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
   final Map<String, String> _tradeNotes = {};
 
   Timer? _refreshTimer;
+  Timer? _liveRefreshTimer;
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
   late AnimationController _shimmerController;
@@ -309,6 +312,11 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
   DateTime _calcDate =
       DateTime.now().subtract(const Duration(days: 365));
   double? _calcResult;
+
+  // True while fetching ALL-timeframe candles for historical calculator
+  bool _isFetchingHistoricalCandles = false;
+  // All-timeframe candles for historical date calculation
+  List<OhlcvCandle> _historicalCandles = [];
 
   final List<String> _timeframes = [
     '1D', '1W', '1M', '1Y', '3Y', '5Y', 'ALL'
@@ -337,15 +345,40 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
     _loadData();
     _setupAutoRefresh();
     _loadTradeNotes();
+
+    // Register this symbol with the live price cache
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ref.read(livePriceCacheProvider.notifier)
+            .registerSymbols([widget.holding.instrumentSymbol]);
+        _startLiveRefresh();
+      }
+    });
   }
 
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _liveRefreshTimer?.cancel();
     _pulseController.dispose();
     _shimmerController.dispose();
     _calcAmountController.dispose();
     super.dispose();
+  }
+
+  void _startLiveRefresh() {
+    if (!MarketStatusHelper.isMarketOpen()) return;
+    _liveRefreshTimer?.cancel();
+    // 5-second refresh while this screen is visible and market is open
+    _liveRefreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!mounted) return;
+      if (!MarketStatusHelper.isMarketOpen()) {
+        _liveRefreshTimer?.cancel();
+        return;
+      }
+      ref.read(livePriceCacheProvider.notifier)
+          .fetchSymbol(widget.holding.instrumentSymbol);
+    });
   }
 
   void _setupAutoRefresh() {
@@ -408,13 +441,33 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
       final candles = await _marketService.fetchCandles(
           widget.holding.instrumentSymbol, _selectedTimeframe);
       if (mounted) {
-        setState(() {
-          _candles = candles;
-          _isLoadingCandles = false;
-          _touchedCandleIndex = null;
-          _touchedCandle = null;
-        });
-        _computeCalcResult();
+        // Clamp the calculator date to the available candle range
+        // so the calculator works immediately without the user picking a date
+        if (candles.isNotEmpty) {
+          final firstCandleDate = candles.first.time;
+          final lastCandleDate = candles.last.time;
+
+          setState(() {
+            _candles = candles;
+            _isLoadingCandles = false;
+            _touchedCandleIndex = null;
+            _touchedCandle = null;
+            
+            // Clamp: if current _calcDate is before first candle, move it to first candle
+            // If after last candle, move to last candle
+            if (_calcDate.isBefore(firstCandleDate)) {
+              _calcDate = firstCandleDate;
+            } else if (_calcDate.isAfter(lastCandleDate)) {
+              _calcDate = lastCandleDate;
+            }
+          });
+          _computeCalcResult();
+        } else {
+          setState(() {
+            _candles = candles;
+            _isLoadingCandles = false;
+          });
+        }
       }
     } catch (_) {
       if (mounted) setState(() => _isLoadingCandles = false);
@@ -427,6 +480,93 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
       setState(() => _selectedTimeframe = tf);
     }
     _loadCandles();
+  }
+
+  /// Computes the calculator result for a given date.
+  /// If the date is within the current candle range, uses loaded candles.
+  /// If the date is outside (historical), fetches ALL timeframe candles.
+  Future<void> _computeCalcResultForDate(DateTime date) async {
+    final amount = double.tryParse(_calcAmountController.text);
+    if (amount == null || amount <= 0) {
+      if (mounted) setState(() => _calcResult = null);
+      return;
+    }
+
+    // Check if current candles cover this date
+    final candlesCoverDate = _candles.isNotEmpty &&
+        !date.isBefore(_candles.first.time) &&
+        !date.isAfter(_candles.last.time);
+
+    if (candlesCoverDate) {
+      // Use current candles directly
+      _computeCalcResult();
+      return;
+    }
+
+    // Need to fetch ALL timeframe candles for historical calculation
+    if (mounted) {
+      setState(() {
+        _isFetchingHistoricalCandles = true;
+        _calcResult = null;
+      });
+    }
+
+    try {
+      // Use cached historical candles if available, otherwise fetch
+      List<OhlcvCandle> candles = _historicalCandles;
+      if (candles.isEmpty) {
+        candles = await _marketService.fetchCandles(
+            widget.holding.instrumentSymbol, 'ALL');
+        if (mounted) setState(() => _historicalCandles = candles);
+      }
+
+      if (candles.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _isFetchingHistoricalCandles = false;
+            _calcResult = null;
+          });
+        }
+        return;
+      }
+
+      // Find closest candle to the selected date
+      OhlcvCandle? target;
+      Duration minDiff = const Duration(days: 999999);
+      for (final c in candles) {
+        final diff = c.time.difference(date).abs();
+        if (diff < minDiff) {
+          minDiff = diff;
+          target = c;
+        }
+      }
+
+      if (target == null || target.close <= 0) {
+        if (mounted) {
+          setState(() {
+            _isFetchingHistoricalCandles = false;
+            _calcResult = null;
+          });
+        }
+        return;
+      }
+
+      final currentPrice =
+          _quote?.currentPrice ?? _candles.last.close;
+      if (mounted) {
+        setState(() {
+          _calcResult = (amount / target!.close) * currentPrice;
+          _isFetchingHistoricalCandles = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isFetchingHistoricalCandles = false;
+          _calcResult = null;
+        });
+      }
+    }
   }
 
   void _computeCalcResult() {
@@ -454,6 +594,18 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
         target = c;
       }
     }
+    
+    // If no target found in current candles, check historical candles
+    if (target == null && _historicalCandles.isNotEmpty) {
+      for (final c in _historicalCandles) {
+        final diff = c.time.difference(_calcDate).abs();
+        if (diff < minDiff) {
+          minDiff = diff;
+          target = c;
+        }
+      }
+    }
+
     if (target == null || target.close <= 0) {
       if (mounted) {
         setState(() => _calcResult = null);
@@ -517,25 +669,76 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
   // ── Build ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    // Listen for live price updates from the cache
+    ref.listen<LivePriceState>(livePriceCacheProvider, (_, state) {
+      final symbol = widget.holding.instrumentSymbol.toUpperCase();
+      final liveQuote = state.quoteFor(symbol);
+      if (liveQuote != null && mounted) {
+        setState(() {
+          _quote = liveQuote;
+          _hasQuoteError = false;
+          _isLoadingQuote = false;
+        });
+        _computeCalcResult();
+      }
+    });
+
     final status = MarketStatusHelper.current();
-    return Scaffold(
-      backgroundColor: DesignTokens.graphiteBase,
-      appBar: AppBar(
+    return DefaultTabController(
+      length: 5,
+      child: Scaffold(
         backgroundColor: DesignTokens.graphiteBase,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded,
-              size: 20),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-        title: Text(
-          widget.holding.instrumentSymbol,
-          style: Theme.of(context)
-              .textTheme
-              .titleLarge
-              ?.copyWith(fontWeight: FontWeight.w600),
-        ),
+        appBar: AppBar(
+          backgroundColor: DesignTokens.graphiteBase,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                size: 20),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+          title: Text(
+            widget.holding.instrumentSymbol,
+            style: Theme.of(context)
+                .textTheme
+                .titleLarge
+                ?.copyWith(fontWeight: FontWeight.w600),
+          ),
+          bottom: const TabBar(
+            isScrollable: true,
+            tabAlignment: TabAlignment.start,
+            indicatorSize: TabBarIndicatorSize.tab,
+            indicatorWeight: 3,
+            dividerColor: Colors.transparent,
+            tabs: [
+              Tab(text: 'Overview'),
+              Tab(text: 'Position'),
+              Tab(text: 'Fundamentals'),
+              Tab(text: 'Returns'),
+              Tab(text: 'Intelligence'),
+            ],
+          ),
         actions: [
+          // Live update timestamp
+          Consumer(
+            builder: (context, ref, _) {
+              final cacheState = ref.watch(livePriceCacheProvider);
+              if (!MarketStatusHelper.isMarketOpen()) {
+                return const SizedBox.shrink();
+              }
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Center(
+                  child: Text(
+                    cacheState.lastUpdatedLabel,
+                    style: TextStyle(
+                      color: DesignTokens.textMediumContrast.withValues(alpha: 0.5),
+                      fontSize: 9,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.notifications_outlined,
                 color: DesignTokens.textMediumContrast),
@@ -550,41 +753,91 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
               ),
             ),
           ),
-          _MarketStatusBadge(
-              status: status,
-              pulseAnimation: _pulseAnimation),
+          const _MarketStatusBadge(),
           const SizedBox(width: 12),
         ],
       ),
-      body: SingleChildScrollView(
-        physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.symmetric(
-            horizontal: 20, vertical: 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildPriceHeader(status),
-            const SizedBox(height: 20),
-            _buildDayRangeBar(),
-            const SizedBox(height: 20),
-            _buildTimeframeSelector(),
-            const SizedBox(height: 12),
-            _buildChartArea(),
-            const SizedBox(height: 8),
-            _buildChartToggle(),
-            const SizedBox(height: 28),
-            _buildPositionCard(),
-            const SizedBox(height: 14),
-            _buildMarketDataCard(),
-            const SizedBox(height: 14),
-            _buildEntryAnalysisCard(),
-            const SizedBox(height: 14),
-            _buildInvestmentJourney(),
-            const SizedBox(height: 14),
-            _buildReturnsCalculator(),
-            const SizedBox(height: 48),
-          ],
-        ),
+      body: TabBarView(
+        children: [
+          // Overview
+          SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 20, vertical: 12),
+            physics: const BouncingScrollPhysics(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildPriceHeader(status),
+                const SizedBox(height: 20),
+                _buildDayRangeBar(),
+                const SizedBox(height: 20),
+                _buildTimeframeSelector(),
+                const SizedBox(height: 12),
+                _buildChartArea(),
+                const SizedBox(height: 8),
+                _buildChartToggle(),
+                const SizedBox(height: 28),
+                _buildSymbolInfoCard(),
+                const SizedBox(height: 48),
+              ],
+            ),
+          ),
+          // Position
+          SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 20, vertical: 12),
+            physics: const BouncingScrollPhysics(),
+            child: Column(
+              children: [
+                _buildPositionCard(),
+                const SizedBox(height: 14),
+                _buildEntryAnalysisCard(),
+                const SizedBox(height: 48),
+              ],
+            ),
+          ),
+          // Fundamentals
+          SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 20, vertical: 12),
+            physics: const BouncingScrollPhysics(),
+            child: Column(
+              children: [
+                _buildFundamentalsCard(),
+                const SizedBox(height: 14),
+                _buildMarketDataCard(),
+                const SizedBox(height: 48),
+              ],
+            ),
+          ),
+          // Returns
+          SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 20, vertical: 12),
+            physics: const BouncingScrollPhysics(),
+            child: Column(
+              children: [
+                _buildReturnsCalculator(),
+                const SizedBox(height: 14),
+                _buildTaxCalculatorCard(),
+                const SizedBox(height: 48),
+              ],
+            ),
+          ),
+          // Intelligence
+          SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 20, vertical: 12),
+            physics: const BouncingScrollPhysics(),
+            child: Column(
+              children: [
+                _buildInvestmentJourney(),
+                const SizedBox(height: 48),
+              ],
+            ),
+          ),
+        ],
+      ),
       ),
     );
   }
@@ -1379,13 +1632,14 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
                   valueColor: pnlColor,
                 ),
                 if (xirr != null)
-                  _InfoRow(
+                  _InfoRowWithInfo(
                     label: 'XIRR (annualised)',
                     value:
                         '${xirr >= 0 ? '+' : ''}${xirr.toStringAsFixed(2)}%',
                     valueColor: xirr >= 0
                         ? DesignTokens.obsidianTeal
                         : DesignTokens.crimsonWarning,
+                    tooltipText: 'Extended Internal Rate of Return accounts for irregular deposit/withdrawal dates, providing a more accurate annualised return over time.',
                   ),
                 if (totalCharges > 0)
                   _InfoRow(
@@ -1442,15 +1696,17 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
             label: 'Day Low',
             value: CurrencyFormatter.format(q.dayLow,
                 showDecimals: true)),
-        _InfoRow(
+        _InfoRowWithInfo(
             label: '52W High',
             value: CurrencyFormatter.format(
                 q.fiftyTwoWeekHigh,
-                showDecimals: true)),
-        _InfoRow(
+                showDecimals: true),
+            tooltipText: 'The highest price this instrument has traded at over the past 52 weeks (1 year).'),
+        _InfoRowWithInfo(
             label: '52W Low',
             value: CurrencyFormatter.format(q.fiftyTwoWeekLow,
-                showDecimals: true)),
+                showDecimals: true),
+            tooltipText: 'The lowest price this instrument has traded at over the past 52 weeks (1 year).'),
         const SizedBox(height: 12),
         ClipRRect(
           borderRadius: BorderRadius.circular(4),
@@ -1485,9 +1741,10 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
           ],
         ),
         const SizedBox(height: 12),
-        _InfoRow(
+        _InfoRowWithInfo(
             label: 'Volume',
-            value: volFmt.format(q.volume)),
+            value: volFmt.format(q.volume),
+            tooltipText: 'The total number of shares/units traded during the current day.'),
         _InfoRow(
             label: 'Avg Volume (3M)',
             value: volFmt.format(q.avgVolume)),
@@ -1858,33 +2115,27 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
             const SizedBox(width: 10),
             GestureDetector(
               onTap: () async {
-                final firstDate = _candles.isNotEmpty
-                    ? _candles.first.time
-                    : DateTime.now()
-                        .subtract(
-                            const Duration(days: 365));
+                // Always allow picking from 2010 (GOLDBEES started 2007,
+                // NIFTYBEES started 2002 — 2010 covers all practical cases)
                 final picked = await showDatePicker(
                   context: context,
                   initialDate: _calcDate,
-                  firstDate: firstDate,
+                  firstDate: DateTime(2010),   // ← full historical range
                   lastDate: DateTime.now(),
                   builder: (ctx, child) => Theme(
                     data: Theme.of(ctx).copyWith(
                       colorScheme: ColorScheme.dark(
                         primary: DesignTokens.obsidianTeal,
-                        surface:
-                            DesignTokens.graphiteSurface,
+                        surface: DesignTokens.graphiteSurface,
                       ),
                     ),
                     child: child!,
                   ),
                 );
-                if (picked != null) {
-                  if (mounted) {
-                    setState(() => _calcDate = picked);
-                  }
-                  _computeCalcResult();
-                }
+                if (picked == null) return;
+                if (!mounted) return;
+                setState(() => _calcDate = picked);
+                _computeCalcResultForDate(picked);
               },
               child: Container(
                 padding: const EdgeInsets.symmetric(
@@ -1918,7 +2169,21 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
           ],
         ),
         const SizedBox(height: 16),
-        if (_calcResult != null)
+        if (_isFetchingHistoricalCandles)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Center(
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: DesignTokens.obsidianTeal,
+                ),
+              ),
+            ),
+          )
+        else if (_calcResult != null)
           Builder(builder: (context) {
             final invested = double.tryParse(
                     _calcAmountController.text) ??
@@ -1993,20 +2258,373 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
       ],
     );
   }
+  Widget _buildSymbolInfoCard() {
+    final cls = SymbolClassifier.classify(widget.holding.instrumentSymbol);
+    return _InfoCard(
+      title: 'Symbol Info',
+      children: [
+        _InfoRowWithInfo(
+          label: 'Type',
+          value: cls.isEtf ? 'ETF' : 'Equity',
+          tooltipText: 'Asset Class indicates the type of security. ETFs are funds tracking an index, while Equity represents ownership in a company.',
+        ),
+        _InfoRowWithInfo(
+          label: 'Category',
+          value: cls.assetClass.name,
+          tooltipText: 'The broad classification assigned to this asset by Viren Intelligence.',
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFundamentalsCard() {
+    return _InfoCard(
+      title: 'Fundamentals',
+      children: const [
+        _InfoRowWithInfo(label: 'Gross Profit', value: '₹--', tooltipText: 'Total revenue minus the cost of goods sold.'),
+        _InfoRowWithInfo(label: 'Net Profit', value: '₹--', tooltipText: 'The actual profit after working expenses not included in the calculation of gross profit have been paid.'),
+        _InfoRowWithInfo(label: 'P/E Ratio', value: '--', tooltipText: 'Price-to-Earnings ratio.'),
+      ],
+    );
+  }
+
+  Widget _buildTaxCalculatorCard() {
+    return ref.watch(allTradesProvider).when(
+      data: (allTrades) {
+        // Filter to buy trades for this symbol only
+        final buyTrades = allTrades
+            .where((tw) =>
+                tw.trade.instrumentSymbol ==
+                    widget.holding.instrumentSymbol &&
+                tw.trade.tradeType == db_enums.TradeType.buy)
+            .toList()
+          ..sort((a, b) => a.trade.tradeTimestamp
+              .compareTo(b.trade.tradeTimestamp));
+
+        if (buyTrades.isEmpty) return const SizedBox.shrink();
+
+        // Use current price or fall back to avg cost
+        final currentPrice =
+            _quote?.currentPrice ?? widget.holding.averagePrice;
+        final totalQty = widget.holding.totalQuantity;
+        final avgCost = widget.holding.averagePrice;
+        final totalInvested = avgCost * totalQty;
+        final currentValue = currentPrice * totalQty;
+        final grossProfit = currentValue - totalInvested;
+
+        // Determine holding period from FIRST buy
+        final firstBuyDate = buyTrades.first.trade.tradeTimestamp;
+        final daysHeld =
+            DateTime.now().difference(firstBuyDate).inDays;
+        final isLongTerm = daysHeld >= 365;
+
+        // Build the card for a loss position
+        if (grossProfit <= 0) {
+          return _InfoCard(
+            title: 'Tax Estimator',
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: DesignTokens.crimsonWarning
+                      .withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                      color: DesignTokens.crimsonWarning
+                          .withValues(alpha: 0.15)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline_rounded,
+                        size: 14,
+                        color: DesignTokens.crimsonWarning
+                            .withValues(alpha: 0.7)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Position is at a loss — no tax applicable '
+                        'if you sell now. Loss can be used to offset '
+                        'gains from other holdings.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: DesignTokens.crimsonWarning
+                              .withValues(alpha: 0.8),
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              _InfoRow(
+                label: 'Current Loss',
+                value:
+                    '${CurrencyFormatter.format(grossProfit, showDecimals: true)}',
+                valueColor: DesignTokens.crimsonWarning,
+              ),
+              _InfoRow(
+                label: 'Held for',
+                value: '$daysHeld days '
+                    '(${isLongTerm ? "Long Term" : "Short Term"})',
+              ),
+            ],
+          );
+        }
+
+        // ── Profitable position — compute tax ──────────────────
+
+        // Indian Capital Gains Tax (post July 2024 Budget):
+        // STCG  < 12 months: 20% flat on equity/ETF gains
+        // LTCG >= 12 months: 12.5% above ₹1,25,000 annual exemption
+        double taxAmount;
+        double taxableProfit;
+        String taxType;
+        String taxRateNote;
+        String holdingNote;
+
+        if (isLongTerm) {
+          const ltcgExemption = 125000.0; // ₹1.25 lakh
+          taxableProfit =
+              (grossProfit - ltcgExemption).clamp(0.0, double.infinity);
+          taxAmount = taxableProfit * 0.125; // 12.5%
+          taxType = 'Long Term Capital Gains (LTCG)';
+          taxRateNote = '12.5% on gains above ₹1.25L exemption';
+          holdingNote = '$daysHeld days held — qualifies for LTCG';
+        } else {
+          taxableProfit = grossProfit;
+          taxAmount = grossProfit * 0.20; // 20%
+          taxType = 'Short Term Capital Gains (STCG)';
+          taxRateNote = '20% flat rate';
+          holdingNote = '$daysHeld days held — STCG applies'
+              ' (sell after ${365 - daysHeld} more days for LTCG)';
+        }
+
+        final netProfit = grossProfit - taxAmount;
+        final effectiveTaxRate = grossProfit > 0
+            ? (taxAmount / grossProfit) * 100
+            : 0.0;
+
+        return _InfoCard(
+          title: 'Tax Estimator',
+          children: [
+            // Status banner
+            Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: isLongTerm
+                    ? DesignTokens.obsidianTeal.withValues(alpha: 0.08)
+                    : DesignTokens.ashGold.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: isLongTerm
+                      ? DesignTokens.obsidianTeal.withValues(alpha: 0.2)
+                      : DesignTokens.ashGold.withValues(alpha: 0.2),
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    isLongTerm
+                        ? Icons.check_circle_outline_rounded
+                        : Icons.schedule_rounded,
+                    size: 14,
+                    color: isLongTerm
+                        ? DesignTokens.obsidianTeal
+                        : DesignTokens.ashGold,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          taxType,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: isLongTerm
+                                ? DesignTokens.obsidianTeal
+                                : DesignTokens.ashGold,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          holdingNote,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: isLongTerm
+                                ? DesignTokens.obsidianTeal
+                                    .withValues(alpha: 0.7)
+                                : DesignTokens.ashGold
+                                    .withValues(alpha: 0.7),
+                            height: 1.3,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            // Numbers breakdown
+            _InfoRowWithInfo(
+              label: 'Gross Profit',
+              value:
+                  '+${CurrencyFormatter.format(grossProfit, showDecimals: true)}',
+              tooltipText:
+                  'Total gain before tax: current value minus your total invested amount.',
+            ),
+
+            if (isLongTerm && taxableProfit < grossProfit) ...[
+              _InfoRow(
+                label: 'LTCG Exemption',
+                value:
+                    '-₹1,25,000',
+                valueColor: DesignTokens.obsidianTeal,
+              ),
+              _InfoRow(
+                label: 'Taxable Amount',
+                value: CurrencyFormatter.format(taxableProfit,
+                    showDecimals: true),
+              ),
+            ],
+
+            _InfoRowWithInfo(
+              label: 'Tax @ $taxRateNote',
+              value:
+                  '-${CurrencyFormatter.format(taxAmount, showDecimals: true)}',
+              tooltipText:
+                  'Estimated tax liability. $taxType: $taxRateNote. '
+                  'This is an estimate only — consult a CA for exact liability.',
+              valueColor: DesignTokens.crimsonWarning,
+            ),
+
+            Divider(
+                color: Colors.white.withValues(alpha: 0.06),
+                height: 20),
+
+            _InfoRowWithInfo(
+              label: 'Net Profit (after tax)',
+              value:
+                  '+${CurrencyFormatter.format(netProfit, showDecimals: true)}',
+              tooltipText:
+                  'What you actually take home after paying capital gains tax.',
+              valueColor: DesignTokens.obsidianTeal,
+            ),
+
+            _InfoRow(
+              label: 'Effective Tax Rate',
+              value: '${effectiveTaxRate.toStringAsFixed(1)}%',
+              valueColor: DesignTokens.textMediumContrast,
+            ),
+
+            // Tip if short term and close to LTCG threshold
+            if (!isLongTerm && daysHeld > 300) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: DesignTokens.ashGold.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                      color:
+                          DesignTokens.ashGold.withValues(alpha: 0.2)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.lightbulb_outline_rounded,
+                        size: 13,
+                        color: DesignTokens.ashGold
+                            .withValues(alpha: 0.8)),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        'You are ${365 - daysHeld} days away from LTCG. '
+                        'Waiting saves you ₹${CurrencyFormatter.format(grossProfit * 0.20 - (grossProfit - 125000).clamp(0, double.infinity) * 0.125, showDecimals: false)} in tax.',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: DesignTokens.ashGold
+                              .withValues(alpha: 0.8),
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
+            const SizedBox(height: 8),
+            Text(
+              '* Estimate only. Based on simplified LTCG/STCG rules '
+              'for listed equity and ETFs. Actual liability may differ '
+              'based on your total gains across all investments. '
+              'Consult a CA for exact advice.',
+              style: TextStyle(
+                color: DesignTokens.textMediumContrast
+                    .withValues(alpha: 0.4),
+                fontSize: 9,
+                height: 1.4,
+              ),
+            ),
+          ],
+        );
+      },
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+    );
+  }
 }
 
 // ─── Market Status Badge ──────────────────────────────────────────────────────
-class _MarketStatusBadge extends StatelessWidget {
-  final MarketStatus status;
-  final Animation<double> pulseAnimation;
+class _MarketStatusBadge extends StatefulWidget {
+  const _MarketStatusBadge({super.key});
 
-  const _MarketStatusBadge(
-      {required this.status, required this.pulseAnimation});
+  @override
+  State<_MarketStatusBadge> createState() => _MarketStatusBadgeState();
+}
+
+class _MarketStatusBadgeState extends State<_MarketStatusBadge> with SingleTickerProviderStateMixin {
+  late Timer _timer;
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
+  late MarketStatus _status;
+
+  @override
+  void initState() {
+    super.initState();
+    _status = MarketStatusHelper.current();
+    _pulseController = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 1200))
+      ..repeat(reverse: true);
+    _pulseAnimation = Tween<double>(begin: 0.4, end: 1.0).animate(
+        CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut));
+    
+    _timer = Timer.periodic(const Duration(seconds: 60), (_) {
+      if (mounted) {
+        setState(() => _status = MarketStatusHelper.current());
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    _pulseController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final color = MarketStatusHelper.color(status);
-    final label = MarketStatusHelper.label(status);
+    final color = MarketStatusHelper.color(_status);
+    final label = MarketStatusHelper.label(_status);
 
     return Container(
       padding:
@@ -2019,11 +2637,11 @@ class _MarketStatusBadge extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (status == MarketStatus.live)
+          if (_status == MarketStatus.live)
             AnimatedBuilder(
-              animation: pulseAnimation,
+              animation: _pulseAnimation,
               builder: (_, child) => Opacity(
-                  opacity: pulseAnimation.value, child: child),
+                  opacity: _pulseAnimation.value, child: child),
               child: Container(
                   width: 6,
                   height: 6,
@@ -2045,6 +2663,77 @@ class _MarketStatusBadge extends StatelessWidget {
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0.5,
                       )),
+        ],
+      ),
+    );
+  }
+}
+
+
+class _InfoRowWithInfo extends StatelessWidget {
+  final String label;
+  final String value;
+  final String tooltipText;
+  final Color? valueColor;
+
+  const _InfoRowWithInfo({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.tooltipText,
+    this.valueColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            children: [
+              Text(label,
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(
+                        color: DesignTokens.textMediumContrast,
+                      )),
+              const SizedBox(width: 4),
+              GestureDetector(
+                onTap: () {
+                  showModalBottomSheet(
+                    context: context,
+                    backgroundColor: DesignTokens.graphiteSurface,
+                    builder: (ctx) => Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(label, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 12),
+                          Text(tooltipText, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: DesignTokens.textMediumContrast, height: 1.5)),
+                          const SizedBox(height: 24),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+                child: Icon(Icons.info_outline_rounded, size: 14, color: DesignTokens.textMediumContrast.withValues(alpha: 0.5)),
+              ),
+            ],
+          ),
+          Text(value,
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(
+                    color: valueColor ??
+                        DesignTokens.textHighContrast,
+                    fontWeight: FontWeight.w500,
+                  )),
         ],
       ),
     );

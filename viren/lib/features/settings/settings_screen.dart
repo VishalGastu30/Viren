@@ -10,6 +10,7 @@ import '../../core/animations/animation_presets.dart';
 import '../../core/security/biometric_service.dart';
 import '../../core/database/providers/database_providers.dart';
 import '../../core/settings/settings_provider.dart';
+import '../../core/insights/storage_cleaner.dart';
 import '../settings/style_guide_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -806,6 +807,43 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   );
                 },
               ),
+            ),
+            const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
+            _SettingsTile(
+              icon: Icons.cleaning_services_rounded,
+              title: 'Smart Vault Cleanup',
+              subtitle: 'Clear old price snapshots and insights. Keeps your notes intact.',
+              onTap: () async {
+                final db = ref.read(appDatabaseProvider);
+                final cleaner = StorageCleaner(db);
+                final messenger = ScaffoldMessenger.of(context);
+                
+                try {
+                  messenger.showSnackBar(
+                    const SnackBar(content: Text('Cleaning up old records...'), duration: Duration(seconds: 1)),
+                  );
+                  await cleaner.run();
+                  if (mounted) {
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: const Text('Cleanup complete.'),
+                        backgroundColor: DesignTokens.obsidianTeal,
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text('Cleanup failed: $e'),
+                        backgroundColor: DesignTokens.crimsonWarning,
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  }
+                }
+              },
             ),
             const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
             _SettingsTile(

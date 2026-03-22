@@ -49,9 +49,12 @@ class _VirenRouterState extends ConsumerState<VirenRouter> {
   }
 
   void _onPageChanged(int index) {
-    setState(() {
-      _currentIndex = index;
-    });
+    setState(() => _currentIndex = index);
+    // Close assistant drawer when switching away from the assistant tab.
+    // Without this, the open drawer bleeds into adjacent tabs.
+    if (index != kTabAssistant) {
+      _assistantKey.currentState?.closeDrawerIfOpen();
+    }
   }
 
   void _navigateToAssistant({String? prompt}) {
@@ -74,6 +77,10 @@ class _VirenRouterState extends ConsumerState<VirenRouter> {
   }
 
   void _onBottomNavTapped(int index) {
+    // Close drawer before switching tabs
+    if (index != kTabAssistant) {
+      _assistantKey.currentState?.closeDrawerIfOpen();
+    }
     _pageController.animateToPage(
       index,
       duration: AnimationPresets.durationNormal,

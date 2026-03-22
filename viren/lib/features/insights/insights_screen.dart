@@ -9,6 +9,20 @@ import 'widgets/insight_card.dart';
 import 'journal_screen.dart';
 import '../settings/alert_settings_screen.dart';
 
+/// Reactive stream of alerts directly from DB — bypasses AlertRepository.
+/// Used as fallback AND as the primary reactive source for import updates.
+final rawAlertsProvider = StreamProvider<List<Alert>>((ref) {
+  final db = ref.watch(appDatabaseProvider);
+  return (db.select(db.alerts)
+        ..where((a) =>
+            a.dismissedAt.isNull() &
+            a.snoozedUntil.isSmallerThanValue(DateTime(9998)))
+        ..orderBy([(a) => drift.OrderingTerm(
+            expression: a.createdAt,
+            mode: drift.OrderingMode.desc)]))
+      .watch();
+});
+
 class InsightsScreen extends ConsumerStatefulWidget {
   const InsightsScreen({super.key});
 
@@ -19,6 +33,43 @@ class InsightsScreen extends ConsumerStatefulWidget {
 
 class _InsightsScreenState extends ConsumerState<InsightsScreen> {
   bool _isRefreshing = false;
+  final Set<String> _expandedCards = {};
+
+  @override
+  void initState() {
+    super.initState();
+    // Listen for trade changes — run insight engine when new trades arrive
+    // so insights appear automatically after an import
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _setupTradeChangeListener();
+    });
+  }
+
+  void _setupTradeChangeListener() {
+    // Watch allTradesProvider — when trades change, run a force check
+    // This handles: manual import, email auto-import, and background sync
+    ref.listenManual(allTradesProvider, (prev, next) {
+      final prevCount = prev?.value?.length ?? 0;
+      final nextCount = next.value?.length ?? 0;
+
+      if (nextCount > prevCount && !_isRefreshing) {
+        // New trades were added — run insights in background
+        _runInsightsInBackground();
+      }
+    });
+  }
+
+  Future<void> _runInsightsInBackground() async {
+    if (_isRefreshing) return;
+    // Don't show the spinner for automatic background runs
+    // Only show for manual user-initiated refreshes
+    try {
+      final db = ref.read(appDatabaseProvider);
+      final engine = InsightEngine(db);
+      await engine.runForceCheck();
+      // rawAlertsProvider stream will auto-update the UI
+    } catch (_) {}
+  }
 
   Future<void> _refresh() async {
     if (_isRefreshing) return;
@@ -26,7 +77,7 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
     try {
       final db = ref.read(appDatabaseProvider);
       final engine = InsightEngine(db);
-      await engine.run();
+      await engine.runForceCheck();
     } finally {
       if (mounted) setState(() => _isRefreshing = false);
     }
@@ -34,8 +85,6 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final alertsAsync = ref.watch(activeAlertsProvider);
-
     return Scaffold(
       backgroundColor: DesignTokens.graphiteBase,
       appBar: AppBar(
@@ -96,29 +145,66 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
         color: DesignTokens.obsidianTeal,
         backgroundColor: DesignTokens.graphiteSurface,
         onRefresh: _refresh,
-        child: alertsAsync.when(
-          data: (alerts) {
-            // Filter out internal sentinel rows
-            final visible = alerts
-                .where((a) =>
-                    a.alertType != 'MACRO_STATE' &&
-                    a.alertType != 'PRICE_SNAPSHOT' &&
-                    a.alertType != 'EMOTION_NOTE')
-                .toList();
-            if (visible.isEmpty) {
-              return _buildEmptyState();
-            }
-            return _buildFeed(visible);
-          },
-          loading: () => const Center(
-            child: CircularProgressIndicator(
-              color: DesignTokens.obsidianTeal,
-            ),
-          ),
-          error: (_, __) => _buildEmptyState(),
-        ),
+        child: _buildFeedFromBestSource(),
       ),
     );
+  }
+
+  Widget _buildFeedFromBestSource() {
+    // Watch both providers unconditionally — Riverpod requires
+    // all ref.watch() calls to happen in the same order every build.
+    final activeAsync = ref.watch(activeAlertsProvider);
+    final rawAsync = ref.watch(rawAlertsProvider);
+
+    // Strategy:
+    // 1. Try activeAlertsProvider (AlertRepository stream)
+    // 2. If it errors OR returns empty, use rawAlertsProvider (direct DB stream)
+    // 3. rawAlertsProvider is a StreamProvider — it updates reactively when
+    //    new alerts are written (after import, after WorkManager run, etc.)
+
+    // Merge: prefer active alerts, fall back to raw if needed
+    List<Alert>? activeAlerts;
+    List<Alert>? rawAlerts;
+
+    activeAsync.whenData((data) => activeAlerts = data);
+    rawAsync.whenData((data) => rawAlerts = data);
+
+    // Determine which source to use
+    final useRaw = activeAlerts == null ||
+        (activeAlerts!.isEmpty && rawAlerts != null && rawAlerts!.isNotEmpty);
+
+    final alerts = useRaw ? (rawAlerts ?? []) : (activeAlerts ?? []);
+    final isLoading = activeAsync.isLoading && rawAsync.isLoading;
+
+    if (isLoading) {
+      return ListView(
+        children: [
+          SizedBox(
+            height: MediaQuery.of(context).size.height * 0.5,
+            child: const Center(
+              child: CircularProgressIndicator(
+                color: DesignTokens.obsidianTeal,
+                strokeWidth: 2,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    final visible = _filterVisible(alerts);
+    if (visible.isEmpty) return _buildEmptyState();
+    return _buildFeed(visible);
+  }
+
+  List<Alert> _filterVisible(List<Alert> alerts) {
+    return alerts
+        .where((a) =>
+            a.alertType != 'MACRO_STATE' &&
+            a.alertType != 'PRICE_SNAPSHOT' &&
+            a.alertType != 'EMOTION_NOTE' &&
+            a.alertType != 'OVERNIGHT_DATA')
+        .toList();
   }
 
   Widget _buildEmptyState() {
@@ -166,51 +252,122 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
   }
 
   Widget _buildFeed(List<Alert> alerts) {
-    final now = DateTime.now();
-    final todayAlerts = alerts
-        .where((a) => now.difference(a.createdAt).inHours < 24)
-        .toList();
-    final weekAlerts = alerts
-        .where((a) =>
-            now.difference(a.createdAt).inHours >= 24 &&
-            now.difference(a.createdAt).inDays < 7)
-        .toList();
-    final olderAlerts = alerts
-        .where((a) => now.difference(a.createdAt).inDays >= 7)
+    // ── Categories using EXACT alertType strings from AlertTriggerService ──
+    // These must match the strings passed to createPatternAlert(),
+    // createMacroAlert(), createNewsAlert(), checkDrawdown(), etc.
+
+    final urgent = alerts.where((a) =>
+        a.severity.name == 'critical' ||
+        a.alertType == 'STOP_LOSS_HIT' ||
+        a.alertType == 'PRICE_TARGET_HIT').toList();
+
+    final marketIntel = alerts.where((a) =>
+        a.alertType == 'NEWS_ALERT' ||      // ← createNewsAlert()
+        a.alertType == 'MACRO_ALERT' ||     // ← createMacroAlert()
+        a.alertType == 'MORNING_BRIEFING' ||
+        a.alertType == 'MOMENTUM_ALERT').toList();   // ← checkMomentum()
+
+    final portfolio = alerts.where((a) =>
+        a.alertType == 'DRAWDOWN_ALERT' ||   // ← checkDrawdown()
+        a.alertType == 'RECOVERY_ALERT' ||   // ← checkRecovery()
+        a.alertType == 'PORTFOLIO_MILESTONE' ||
+        a.alertType == 'DCA_OPPORTUNITY' ||
+        a.alertType == 'ACCUMULATION_PATTERN' ||
+        a.alertType == 'CONCENTRATION_DRIFT').toList();
+
+    final behaviour = alerts.where((a) =>
+        a.alertType == 'CONSISTENCY_STREAK' ||
+        a.alertType == 'BEHAVIOUR_WARNING' ||  // ← _checkMirrorWarning()
+        a.alertType == 'INACTIVITY_ALERT' ||
+        a.alertType == 'WEEKLY_DIGEST').toList();
+
+    // Catch-all: any alert not matched above still shows
+    final categorised = {
+      ...urgent, ...marketIntel, ...portfolio, ...behaviour
+    }.map((a) => a.id).toSet();
+    final other = alerts
+        .where((a) => !categorised.contains(a.id))
         .toList();
 
+    // Sort each group newest first
+    for (final list in [urgent, marketIntel, portfolio, behaviour, other]) {
+      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    }
+
     return ListView(
-      padding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
       children: [
-        if (todayAlerts.isNotEmpty) ...[
-          _sectionHeader('Today'),
-          ...todayAlerts.map(_buildCard),
+        if (urgent.isNotEmpty) ...[
+          _sectionHeader('Urgent', count: urgent.length, isUrgent: true),
+          ...urgent.map(_buildCard),
         ],
-        if (weekAlerts.isNotEmpty) ...[
-          _sectionHeader('This Week'),
-          ...weekAlerts.map(_buildCard),
+        if (marketIntel.isNotEmpty) ...[
+          _sectionHeader('Market Intelligence', count: marketIntel.length),
+          ...marketIntel.map(_buildCard),
         ],
-        if (olderAlerts.isNotEmpty) ...[
-          _sectionHeader('Older'),
-          ...olderAlerts.map(_buildCard),
+        if (portfolio.isNotEmpty) ...[
+          _sectionHeader('Your Portfolio', count: portfolio.length),
+          ...portfolio.map(_buildCard),
         ],
-        const SizedBox(height: 80),
+        if (behaviour.isNotEmpty) ...[
+          _sectionHeader('Your Patterns', count: behaviour.length),
+          ...behaviour.map(_buildCard),
+        ],
+        if (other.isNotEmpty) ...[
+          _sectionHeader('Updates', count: other.length),
+          ...other.map(_buildCard),
+        ],
+        if ([urgent, marketIntel, portfolio, behaviour, other]
+            .every((l) => l.isEmpty))
+          _buildEmptyState(),
+        const SizedBox(height: 20),
+        Center(
+          child: Text(
+            '${alerts.length} total insights',
+            style: TextStyle(
+              color: DesignTokens.textMediumContrast.withValues(alpha: 0.3),
+              fontSize: 11,
+            ),
+          ),
+        ),
       ],
     );
   }
 
-  Widget _sectionHeader(String title) {
+  Widget _sectionHeader(String title, {int count = 0, bool isUrgent = false}) {
     return Padding(
-      padding:
-          const EdgeInsets.only(top: 16, bottom: 8, left: 4),
-      child: Text(
-        title,
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: DesignTokens.textMediumContrast,
-              letterSpacing: 0.8,
-              fontWeight: FontWeight.w600,
+      padding: const EdgeInsets.only(top: 8, bottom: 12, left: 4),
+      child: Row(
+        children: [
+          Text(
+            title,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: isUrgent ? DesignTokens.crimsonWarning : DesignTokens.textMediumContrast,
+                  letterSpacing: 0.8,
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+          if (count > 0) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: isUrgent 
+                    ? DesignTokens.crimsonWarning.withValues(alpha: 0.2)
+                    : DesignTokens.obsidianTeal.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                count.toString(),
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: isUrgent ? DesignTokens.crimsonWarning : DesignTokens.obsidianTeal,
+                ),
+              ),
             ),
+          ],
+        ],
       ),
     );
   }
@@ -218,7 +375,8 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
   Widget _buildCard(Alert alert) {
     if (alert.alertType == 'MACRO_STATE' ||
         alert.alertType == 'PRICE_SNAPSHOT' ||
-        alert.alertType == 'EMOTION_NOTE') {
+        alert.alertType == 'EMOTION_NOTE' ||
+        alert.alertType == 'OVERNIGHT_DATA') {
       return const SizedBox.shrink();
     }
 
@@ -271,7 +429,21 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
           dismissedAt: drift.Value(DateTime.now()),
         ));
       },
-      child: InsightCard(alert: alert),
+      child: GestureDetector(
+        onTap: () {
+          setState(() {
+            if (_expandedCards.contains(alert.id)) {
+              _expandedCards.remove(alert.id);
+            } else {
+              _expandedCards.add(alert.id);
+            }
+          });
+        },
+        child: InsightCard(
+          alert: alert,
+          isExpanded: _expandedCards.contains(alert.id),
+        ),
+      ),
     );
   }
 }

@@ -25,6 +25,7 @@ final allAlertsHistoryProvider = StreamProvider<List<Alert>>((ref) {
   final db = ref.watch(appDatabaseProvider);
   return (db.select(db.alerts)
         ..where((a) => a.alertType.isNotValue('MACRO_STATE') &
+            a.alertType.isNotValue('OVERNIGHT_DATA') &
             a.alertType.isNotValue('USER_STOP_LOSS') &
             a.alertType.isNotValue('USER_PRICE_TARGET'))
         ..orderBy([(a) => OrderingTerm.desc(a.createdAt)]))

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/database/providers/database_providers.dart';
 import '../../core/database/app_database.dart';
 import '../../core/market/market_data_service.dart';
+import '../../core/market/live_price_cache.dart';
 import '../../core/market/nse_price_service.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/animations/animation_presets.dart';
@@ -340,6 +341,9 @@ class _HoldingsListScreenState extends ConsumerState<HoldingsListScreen> {
           totalInvested > 0 ? (totalPnL / totalInvested) * 100 : 0.0;
 
       if (mounted) {
+        // Register all these symbols with the background cache so it knows to watch them
+        ref.read(livePriceCacheProvider.notifier).registerSymbols(symbols);
+        
         setState(() {
           _liveHoldings = _sortHoldings(enriched);
           _totals = PortfolioTotals(
@@ -471,6 +475,70 @@ class _HoldingsListScreenState extends ConsumerState<HoldingsListScreen> {
   // ── Build ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    // Listen to live price cache and update rows if prices change
+    ref.listen<LivePriceState>(livePriceCacheProvider, (previous, next) {
+      if (_liveHoldings.isEmpty) return;
+      
+      bool needsRebuild = false;
+      final updatedList = List<LiveHolding>.from(_liveHoldings);
+      double totalInvested = 0;
+      double totalCurrentValue = 0;
+      bool anyPrices = false;
+
+      for (int i = 0; i < updatedList.length; i++) {
+        final lh = updatedList[i];
+        final sym = lh.holding.instrumentSymbol.toUpperCase();
+        final quote = next.quoteFor(sym);
+        
+        totalInvested += lh.holding.investedValue;
+        
+        if (quote != null) {
+          anyPrices = true;
+          // Only update if price changed
+          if (lh.cmp != quote.currentPrice) {
+            needsRebuild = true;
+            final cv = quote.currentPrice * lh.holding.totalQuantity;
+            final pnl = cv - lh.holding.investedValue;
+            final ret = lh.holding.investedValue > 0 ? (pnl / lh.holding.investedValue) * 100 : 0.0;
+            
+            updatedList[i] = LiveHolding(
+              holding: lh.holding,
+              cmp: quote.currentPrice,
+              currentValue: cv,
+              unrealisedPnL: pnl,
+              returnPct: ret,
+              sparklineCandles: lh.sparklineCandles,
+            );
+          } else {
+             totalCurrentValue += (lh.currentValue ?? lh.holding.investedValue);
+          }
+        } else {
+           totalCurrentValue += (lh.currentValue ?? lh.holding.investedValue);
+        }
+      }
+
+      if (needsRebuild && mounted) {
+        // Recalculate totals since prices changed
+        totalCurrentValue = 0;
+        for (final lh in updatedList) {
+           totalCurrentValue += (lh.currentValue ?? lh.holding.investedValue);
+        }
+        final totalPnL = totalCurrentValue - totalInvested;
+        final totalReturnPct = totalInvested > 0 ? (totalPnL / totalInvested) * 100 : 0.0;
+        
+        setState(() {
+          _liveHoldings = _sortHoldings(updatedList);
+          _totals = PortfolioTotals(
+            totalInvested: totalInvested,
+            totalCurrentValue: totalCurrentValue,
+            totalPnL: totalPnL,
+            totalReturnPct: totalReturnPct,
+            hasPriceData: anyPrices,
+          );
+        });
+      }
+    });
+
     return Scaffold(
       backgroundColor: DesignTokens.graphiteBase,
       appBar: AppBar(
@@ -510,6 +578,7 @@ class _HoldingsListScreenState extends ConsumerState<HoldingsListScreen> {
         ],
       ),
       body: ref.watch(holdingsStreamProvider).when(
+            skipLoadingOnReload: true,
             data: (holdings) {
               if (holdings.isNotEmpty && _liveHoldings.isEmpty) {
                 WidgetsBinding.instance.addPostFrameCallback((_) {

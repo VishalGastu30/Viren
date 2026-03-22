@@ -42,4 +42,10 @@ class MarketStatusHelper {
         return DesignTokens.textMediumContrast;
     }
   }
+
+  /// Returns true if Indian equity market is currently open.
+  /// 9:15 AM – 3:30 PM IST, Monday–Friday.
+  static bool isMarketOpen() {
+    return current() == MarketStatus.live;
+  }
 }

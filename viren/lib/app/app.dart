@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/theme/viren_theme.dart';
 import '../features/splash/splash_screen.dart';
 
+import '../core/market/market_watcher_service.dart';
 import '../core/security/biometric_service.dart';
 import '../core/security/biometric_lock_screen.dart';
 
@@ -43,6 +44,12 @@ class _VirenAppState extends State<VirenApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused && _biometricEnabled) {
       setState(() => _isUnlocked = false);
+    }
+    
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+      MarketWatcherController.stop();
+    } else if (state == AppLifecycleState.resumed) {
+      MarketWatcherController.startIfMarketOpen();
     }
   }
 

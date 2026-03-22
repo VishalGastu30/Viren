@@ -39,6 +39,9 @@ class PatternEngine {
     await _checkConcentrationDrift(holdings);
     await _checkAccumulationPattern(trades);
     await _checkGapDetection(trades, holdings);
+    await _checkEconomicCalendar();
+    await _checkLtcgCountdown(trades, holdings);
+    await _checkPortfolioCorrelation(holdings);
   }
 
   // ── Pattern 1: DCA Detection ──────────────────────────────────
@@ -231,5 +234,106 @@ class PatternEngine {
         'lastTradeDate': lastTrade.tradeTimestamp.toIso8601String(),
       },
     );
+  }
+
+  // ── Pattern 5: Economic Calendar Awareness ────────────────────
+  Future<void> _checkEconomicCalendar() async {
+    final now = DateTime.now();
+
+    // 1. F&O Expiry (Last working Thursday of the month)
+    // Roughly days 24-31. If it's a Wed/Thu in that range:
+    if (now.day >= 24 && (now.weekday == 3 || now.weekday == 4)) {
+      await _alertService.createPatternAlert(
+        alertType: 'CALENDAR_EVENT',
+        title: 'Volatility Alert: F&O Expiry Week',
+        description: 'We are in the final days of the monthly derivatives expiry. '
+            'Expect higher intraday volatility in large caps and the Nifty index.',
+        confidence: 90,
+      );
+    }
+
+    // 2. RBI Policy (first week of Feb, Apr, Jun, Aug, Oct, Dec)
+    final rbiMonths = [2, 4, 6, 8, 10, 12];
+    if (rbiMonths.contains(now.month) && now.day >= 3 && now.day <= 8) {
+      await _alertService.createPatternAlert(
+        alertType: 'CALENDAR_EVENT',
+        title: 'Macro Alert: RBI Policy Week',
+        description: 'The RBI Monetary Policy Committee meets this week. '
+            'Rate sensitive sectors (Banking, Auto, Real Estate) may see sharp moves.',
+        confidence: 90,
+      );
+    }
+  }
+
+  // ── Pattern 6: LTCG Countdown ─────────────────────────────────
+  Future<void> _checkLtcgCountdown(List<Trade> trades, List<Holding> holdings) async {
+    final now = DateTime.now();
+    final oneYearAgo = now.subtract(const Duration(days: 365));
+    // Look for buys between 11 and 12 months ago
+    final elevenMonthsAgo = now.subtract(const Duration(days: 335));
+
+    for (final h in holdings) {
+      if (h.totalQuantity <= 0) continue;
+      
+      final symbol = h.instrumentSymbol.toUpperCase();
+      // Find old buys for this symbol
+      final oldBuys = trades.where((t) => 
+        t.tradeType == TradeType.buy && 
+        t.instrumentSymbol.toUpperCase() == symbol &&
+        t.tradeTimestamp.isAfter(oneYearAgo) && 
+        t.tradeTimestamp.isBefore(elevenMonthsAgo)
+      ).toList();
+
+      if (oldBuys.isNotEmpty) {
+        final qty = oldBuys.fold(0.0, (sum, t) => sum + t.quantity);
+        await _alertService.createPatternAlert(
+          alertType: 'LTCG_COUNTDOWN',
+          symbol: symbol,
+          title: '$symbol units approaching Long Term status',
+          description: '${qty.toStringAsFixed(0)} units of $symbol will '
+              'qualify for Long Term Capital Gains (LTCG) tax rates in less than 30 days. '
+              'Consider holding if you were planning to sell.',
+          confidence: 95,
+        );
+      }
+    }
+  }
+
+  // ── Pattern 7: Portfolio Correlation ──────────────────────────
+  Future<void> _checkPortfolioCorrelation(List<Holding> holdings) async {
+    final totalInvested = _totalInvested(holdings);
+    if (totalInvested <= 0) return;
+
+    double bankExposure = 0;
+    double itExposure = 0;
+
+    for (final h in holdings) {
+      final sym = h.instrumentSymbol.toUpperCase();
+      if (sym.contains('BANK') || sym == 'HDFCBANK' || sym == 'ICICIBANK' || sym == 'SBIN' || sym == 'KOTAKBANK' || sym == 'AXISBANK') {
+        bankExposure += h.investedValue;
+      } else if (sym == 'INFY' || sym == 'TCS' || sym.contains('IT') || sym == 'WIPRO' || sym == 'HCLTECH' || sym == 'TECHM') {
+        itExposure += h.investedValue;
+      }
+    }
+
+    if (bankExposure / totalInvested > 0.45) {
+      await _alertService.createPatternAlert(
+        alertType: 'CORRELATION_RISK',
+        title: 'High Banking Sector Exposure',
+        description: 'Over 45% of your portfolio is concentrated in Banking & Financials. '
+            'Your overall portfolio is highly correlated to interest rates and RBI policy.',
+        confidence: 85,
+      );
+    }
+
+    if (itExposure / totalInvested > 0.40) {
+      await _alertService.createPatternAlert(
+        alertType: 'CORRELATION_RISK',
+        title: 'High IT Sector Exposure',
+        description: 'Over 40% of your portfolio is concentrated in the IT sector. '
+            'Your overall portfolio is highly sensitive to US economic data and USD/INR rates.',
+        confidence: 85,
+      );
+    }
   }
 }

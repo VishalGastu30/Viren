@@ -6,8 +6,8 @@ import '../database/app_database.dart';
 // When the user taps "Ask Viren" on an insight card, this builds a prompt
 // that includes:
 //  1. The specific insight (what Viren noticed)
-//  2. The affected holding with CMP, P&L, days held
-//  3. A context-aware specific question per alert type
+//  2. The affected holding and its position details (with live prices)
+//  3. A specific, context-aware question based on the alert type
 //
 // The resulting string is passed to AssistantScreen as initialMessage.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -17,7 +17,7 @@ class AskVirenLauncher {
   static String buildPrompt({
     required Alert alert,
     List<Holding> holdings = const [],
-    Map<String, double> currentPrices = const {}, // current live prices
+    Map<String, double> currentPrices = const {},
   }) {
     final holdingContext = _buildFullHoldingContext(alert, holdings, currentPrices);
     final insightType = _humanReadableType(alert.alertType);
@@ -213,6 +213,7 @@ class AskVirenLauncher {
       case 'PORTFOLIO_MILESTONE':  return 'milestone';
       case 'MOMENTUM_ALERT':       return 'momentum alert';
       case 'MORNING_BRIEFING':     return 'morning briefing';
+      case 'WEEKLY_DIGEST':        return 'weekly digest';
       default:                     return 'insight';
     }
   }

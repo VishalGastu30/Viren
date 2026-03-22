@@ -35,12 +35,23 @@ void callbackDispatcher() {
     }
 
     // ── Weekly digest ──────────────────────────────────────────
-    if (taskName == 'WEEKLY_DIGEST') {
+    if (taskName == 'WEEKLY_DIGEST' || taskName == weeklyDigestTaskName) {
       try {
         final db = AppDatabase();
         await WeeklyDigestService.run(db);
         await db.close();
         await WeeklyDigestService.scheduleNextWeek();
+      } catch (_) {}
+      return Future.value(true);
+    }
+
+    // ── Sunday evening report ─────────────────────────────────────
+    if (taskName == sundayReportTaskName) {
+      try {
+        final db = AppDatabase();
+        await WeeklyDigestService.runSundayReport(db);
+        await db.close();
+        await WeeklyDigestService.scheduleWeekendReports();
       } catch (_) {}
       return Future.value(true);
     }
@@ -90,6 +101,7 @@ Future<void> registerInsightWorker() async {
 
   // Weekly digest
   await WeeklyDigestService.scheduleNextWeek();
+  await WeeklyDigestService.scheduleWeekendReports();
 }
 
 /// Cancels the background task (e.g. when user disables insights).

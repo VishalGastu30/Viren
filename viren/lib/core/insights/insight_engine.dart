@@ -55,6 +55,11 @@ class InsightEngine {
   /// Each layer is wrapped independently — one failure never
   /// cascades to another.
   Future<void> run() async {
+    // Record when this run started — used by _sendPendingNotifications
+    // so it finds ALL alerts created during this run, not just the
+    // last 5 minutes (engines can take longer than 5 minutes).
+    final runStartedAt = DateTime.now();
+
     // Flush any notifications that were queued during quiet hours
     try { await _flushQueuedNotifications(); } catch (_) {}
 
@@ -115,7 +120,7 @@ class InsightEngine {
 
     // Fire notifications for any new HIGH/CRITICAL alerts
     try {
-      await _sendPendingNotifications();
+      await _sendPendingNotifications(since: runStartedAt);
     } catch (_) {}
 
     // Daily maintenance
@@ -127,12 +132,19 @@ class InsightEngine {
 
   /// Bypass de-duplication for manual refreshes (pull down on Insights Screen).
   Future<void> runForceCheck() async {
+    final runStartedAt = DateTime.now();
+
     try { await _runPriceIntelligence(force: true); } catch (_) {}
     try { await _runNewsIntelligence(); } catch (_) {}
     try { await PatternEngine(_db).run(); } catch (_) {}
     try { await MacroEngine(_db).run(); } catch (_) {}
     try { await BehaviourEngine(_db).run(currentPrices: _lastFetchedPrices); } catch (_) {}
     try { await _runBehaviourIntelligence(); } catch (_) {}
+
+    // Fire notifications for alerts created during this run
+    try {
+      await _sendPendingNotifications(since: runStartedAt);
+    } catch (_) {}
   }
 
   // ── Layer 1: Price Intelligence ───────────────────────────────
@@ -406,8 +418,16 @@ If not relevant to any holding, return: {"relevant": false, "symbol": null, "sco
     }
   }
 
-  Future<void> _sendPendingNotifications() async {
-    final cutoff = DateTime.now().subtract(const Duration(minutes: 5));
+  Future<void> _sendPendingNotifications({DateTime? since}) async {
+    // Only send notifications for alerts that haven't been notified yet.
+    // The 'notified' flag in triggerData is set to false by _insert()
+    // and to true after a notification is sent.
+    // This prevents re-sending the same alerts on every refresh.
+
+    // Use the provided start time, or fall back to 5 minutes ago.
+    // When called from run() or runForceCheck(), 'since' is the exact
+    // moment the run started — capturing ALL alerts from this cycle.
+    final cutoff = since ?? DateTime.now().subtract(const Duration(minutes: 5));
 
     final recentAlerts = await (_db.select(_db.alerts)
           ..where((a) =>
@@ -421,7 +441,7 @@ If not relevant to any holding, return: {"relevant": false, "symbol": null, "sco
               a.alertType.isNotValue('USER_PRICE_TARGET')))
         .get();
 
-    // Only send for unnotified alerts
+    // Filter to only unnotified alerts in Dart (triggerData is JSON)
     final newAlerts = recentAlerts.where((a) {
       try {
         final data = jsonDecode(a.triggerData) as Map<String, dynamic>;
@@ -467,71 +487,5 @@ If not relevant to any holding, return: {"relevant": false, "symbol": null, "sco
       // in the notification tray instead of collapsing
       await Future.delayed(const Duration(milliseconds: 150));
     }
-  }
-
-  /// Marks an alert as notified in its triggerData JSON blob.
-  Future<void> _markNotified(Alert alert) async {
-    try {
-      final data =
-          jsonDecode(alert.triggerData) as Map<String, dynamic>;
-      await (_db.update(_db.alerts)
-            ..where((row) => row.id.equals(alert.id)))
-          .write(AlertsCompanion(
-        triggerData:
-            drift.Value(jsonEncode({...data, 'notified': true})),
-      ));
-    } catch (_) {}
-  }
-
-  /// Asks Qwen to generate a one-sentence summary of multiple alerts.
-  /// Falls back to a plain count string if Qwen is unavailable.
-  Future<String> _buildSmartBatchSummary(List<Alert> alerts) async {
-    if (alerts.isEmpty) return 'No new insights.';
-    if (alerts.length == 1) return alerts.first.title;
-
-    // Build a compact list of alert titles for Qwen
-    final titles = alerts
-        .take(5) // cap at 5 to keep prompt short
-        .map((a) => '- ${a.title}')
-        .join('\n');
-
-    try {
-      final basePath =
-          await _llmChannel.invokeMethod<String>('getModelPath');
-      final modelPath =
-          '$basePath/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv1280.task';
-
-      final prompt =
-          '''Summarise these portfolio alerts in ONE sentence under 15 words. 
-Be specific. Use the actual symbols and numbers. No filler words.
-
-Alerts:
-$titles
-
-One sentence summary:''';
-
-      final response =
-          await _llmChannel.invokeMethod<String>('chat', {
-        'prompt': prompt,
-        'modelPath': modelPath,
-      });
-
-      if (response != null && response.trim().isNotEmpty) {
-        // Clean up: remove quotes, newlines, ensure it ends cleanly
-        return response
-            .trim()
-            .replaceAll('"', '')
-            .replaceAll('\n', ' ')
-            .split('.')
-            .first
-            .trim();
-      }
-    } catch (_) {
-      // Qwen unavailable — fall back to plain summary
-    }
-
-    // Fallback: list the top 2 titles
-    final top2 = alerts.take(2).map((a) => a.title).join(' · ');
-    return '${alerts.length} insights: $top2';
   }
 }

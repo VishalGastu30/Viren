@@ -39,6 +39,40 @@ class RssFetcher {
         'https://www.rbi.org.in/Scripts/RSSView.aspx',
   };
 
+  /// Asset-class-specific feeds — used by AssistantService and WeeklyDigest
+  /// to fetch news relevant to specific holdings.
+  static const Map<String, List<String>> _assetClassFeeds = {
+    'gold': [
+      'https://www.kitco.com/rss/kitcoNews.rss',
+      'https://feeds.reuters.com/reuters/businessNews',
+    ],
+    'silver': [
+      'https://www.kitco.com/rss/kitcoNews.rss',
+      'https://feeds.reuters.com/reuters/businessNews',
+    ],
+    'nifty': [
+      'https://economictimes.indiatimes.com/markets/rss.cms',
+      'https://www.moneycontrol.com/rss/marketsindia.xml',
+      'https://feeds.reuters.com/reuters/INbusinessNews',
+    ],
+    'banking': [
+      'https://economictimes.indiatimes.com/industry/banking/finance/rss.cms',
+      'https://www.rbi.org.in/Scripts/RSSView.aspx',
+    ],
+    'commodity': [
+      'https://feeds.reuters.com/reuters/businessNews',
+      'https://economictimes.indiatimes.com/markets/commodities/rss.cms',
+    ],
+    'us_markets': [
+      'https://feeds.reuters.com/reuters/businessNews',
+      'https://feeds.reuters.com/reuters/MostRead',
+    ],
+    'macro_india': [
+      'https://www.rbi.org.in/Scripts/RSSView.aspx',
+      'https://economictimes.indiatimes.com/news/economy/rss.cms',
+    ],
+  };
+
   /// Fetches all feeds and returns deduplicated items from last 24 hours.
   /// Rotates through 2 feeds per call to save battery and avoid rate limits.
   static Future<List<RssItem>> fetchRecent({
@@ -88,6 +122,74 @@ class RssFetcher {
     } catch (_) {
       return [];
     }
+  }
+
+  /// Fetches news for a specific asset class.
+  /// Returns the most recent items from relevant feeds combined.
+  /// Used by AssistantService for live news injection.
+  static Future<List<RssItem>> fetchForAssetClass({
+    required String assetClass, // key from _assetClassFeeds
+    int maxItems = 5,
+    int maxAgeHours = 48, // wider window than default 24h
+  }) async {
+    final urls = _assetClassFeeds[assetClass.toLowerCase()] ?? [];
+    if (urls.isEmpty) return fetchRecent(maxFeedsPerRun: 1, maxItemsPerFeed: maxItems);
+
+    final items = <RssItem>[];
+    // Only fetch from first 2 URLs to keep response fast
+    for (final url in urls.take(2)) {
+      try {
+        final sourceName = _sourceNameFromUrl(url);
+        final fetched = await _fetchFeed(
+          url: url,
+          sourceName: sourceName,
+          maxItems: maxItems,
+        );
+        // Apply wider age filter
+        final recent = fetched.where((item) {
+          if (item.pubDate == null) return true;
+          return DateTime.now().difference(item.pubDate!).inHours <= maxAgeHours;
+        }).toList();
+        items.addAll(recent);
+      } catch (_) {
+        continue;
+      }
+    }
+
+    // Deduplicate and sort by pubDate descending
+    final seen = <String>{};
+    final deduped = items.where((i) => seen.add(i.title)).toList();
+    deduped.sort((a, b) {
+      if (a.pubDate == null && b.pubDate == null) return 0;
+      if (a.pubDate == null) return 1;
+      if (b.pubDate == null) return -1;
+      return b.pubDate!.compareTo(a.pubDate!);
+    });
+
+    return deduped.take(maxItems).toList();
+  }
+
+  static String _sourceNameFromUrl(String url) {
+    if (url.contains('kitco')) return 'Kitco';
+    if (url.contains('reuters')) return 'Reuters';
+    if (url.contains('economictimes')) return 'ET Markets';
+    if (url.contains('moneycontrol')) return 'Moneycontrol';
+    if (url.contains('rbi.org')) return 'RBI';
+    return 'News';
+  }
+
+  /// Maps an NSE symbol to its asset class key for feed routing.
+  static String assetClassForSymbol(String symbol) {
+    final s = symbol.toUpperCase();
+    if (s.contains('GOLD')) { return 'gold'; }
+    if (s.contains('SILVER')) { return 'silver'; }
+    if (s.contains('NIFTY') || s.contains('NIFTYBEES') ||
+        s.contains('JUNIOR') || s.contains('MON100')) { return 'nifty'; }
+    if (s.contains('BANK') || s.contains('YESBANK') ||
+        s.contains('HDFCBANK') || s.contains('ICICI')) { return 'banking'; }
+    if (s.contains('ENERGY') || s.contains('OIL') ||
+        s.contains('ONGC') || s.contains('BPCL')) { return 'commodity'; }
+    return 'macro_india'; // default for unknown symbols
   }
 
   static Future<List<RssItem>> _fetchFeed({

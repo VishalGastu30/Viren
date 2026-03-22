@@ -302,8 +302,6 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
 
   Timer? _refreshTimer;
   Timer? _liveRefreshTimer;
-  late AnimationController _pulseController;
-  late Animation<double> _pulseAnimation;
   late AnimationController _shimmerController;
   late Animation<double> _shimmerAnimation;
 
@@ -325,14 +323,6 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
   @override
   void initState() {
     super.initState();
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1200),
-    )..repeat(reverse: true);
-    _pulseAnimation = Tween<double>(begin: 0.4, end: 1.0).animate(
-      CurvedAnimation(
-          parent: _pulseController, curve: Curves.easeInOut),
-    );
     _shimmerController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
@@ -360,7 +350,6 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
   void dispose() {
     _refreshTimer?.cancel();
     _liveRefreshTimer?.cancel();
-    _pulseController.dispose();
     _shimmerController.dispose();
     _calcAmountController.dispose();
     super.dispose();
@@ -2361,7 +2350,7 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
               _InfoRow(
                 label: 'Current Loss',
                 value:
-                    '${CurrencyFormatter.format(grossProfit, showDecimals: true)}',
+                    CurrencyFormatter.format(grossProfit, showDecimals: true),
                 valueColor: DesignTokens.crimsonWarning,
               ),
               _InfoRow(
@@ -2585,7 +2574,7 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
 
 // ─── Market Status Badge ──────────────────────────────────────────────────────
 class _MarketStatusBadge extends StatefulWidget {
-  const _MarketStatusBadge({super.key});
+  const _MarketStatusBadge();
 
   @override
   State<_MarketStatusBadge> createState() => _MarketStatusBadgeState();
@@ -2677,7 +2666,6 @@ class _InfoRowWithInfo extends StatelessWidget {
   final Color? valueColor;
 
   const _InfoRowWithInfo({
-    super.key,
     required this.label,
     required this.value,
     required this.tooltipText,

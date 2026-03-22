@@ -225,11 +225,13 @@ class InsightCard extends ConsumerWidget {
     final db = ref.read(appDatabaseProvider);
     final holdings = await db.select(db.holdings).get();
 
+    // Read current prices from the live cache
+    final priceState = ref.read(livePriceCacheProvider);
     final prompt = AskVirenLauncher.buildPrompt(
       alert: alert,
       holdings: holdings,
       currentPrices: Map.fromEntries(
-        ref.read(livePriceCacheProvider).quotes.entries.map(
+        priceState.quotes.entries.map(
           (e) => MapEntry(e.key, e.value.currentPrice),
         ),
       ),

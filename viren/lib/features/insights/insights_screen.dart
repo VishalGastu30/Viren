@@ -44,7 +44,6 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
     super.initState();
     _tabController = TabController(length: _tabs.length, vsync: this);
     // Listen for trade changes — run insight engine when new trades arrive
-    // so insights appear automatically after an import
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setupTradeChangeListener();
     });
@@ -57,14 +56,10 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
   }
 
   void _setupTradeChangeListener() {
-    // Watch allTradesProvider — when trades change, run a force check
-    // This handles: manual import, email auto-import, and background sync
     ref.listenManual(allTradesProvider, (prev, next) {
       final prevCount = prev?.value?.length ?? 0;
       final nextCount = next.value?.length ?? 0;
-
       if (nextCount > prevCount && !_isRefreshing) {
-        // New trades were added — run insights in background
         _runInsightsInBackground();
       }
     });
@@ -72,13 +67,10 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
 
   Future<void> _runInsightsInBackground() async {
     if (_isRefreshing) return;
-    // Don't show the spinner for automatic background runs
-    // Only show for manual user-initiated refreshes
     try {
       final db = ref.read(appDatabaseProvider);
       final engine = InsightEngine(db);
       await engine.runForceCheck();
-      // rawAlertsProvider stream will auto-update the UI
     } catch (_) {}
   }
 
@@ -215,7 +207,6 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
   }
 
   List<Alert> _filterForTab(List<Alert> alerts, String tab) {
-    // Sort newest first for all tabs
     final sorted = List<Alert>.from(alerts)
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
@@ -224,7 +215,6 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
         return sorted;
 
       case 'Critical':
-        // Urgent: severe alerts and large price moves
         return sorted.where((a) =>
             a.severity.name == 'critical' ||
             a.severity.name == 'warning' ||
@@ -233,7 +223,6 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
             a.alertType == 'MOMENTUM_ALERT').toList();
 
       case 'Portfolio':
-        // Position-specific alerts
         return sorted.where((a) =>
             a.alertType == 'DRAWDOWN_ALERT' ||
             a.alertType == 'RECOVERY_ALERT' ||
@@ -247,7 +236,6 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
             a.alertType == 'USER_PRICE_TARGET').toList();
 
       case 'Patterns':
-        // Behavioural and habit insights
         return sorted.where((a) =>
             a.alertType == 'CONSISTENCY_STREAK' ||
             a.alertType == 'BEHAVIOUR_WARNING' ||
@@ -255,10 +243,9 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
             a.alertType == 'WEEKLY_DIGEST').toList();
 
       case 'Market':
-        // External intelligence: news, macro, morning briefing
         return sorted.where((a) =>
-            a.alertType == 'NEWS_RELEVANT' ||   // ← exact string from createNewsAlert()
-            a.alertType == 'MACRO_EVENT' ||     // ← exact string from createMacroAlert()
+            a.alertType == 'NEWS_RELEVANT' ||
+            a.alertType == 'MACRO_EVENT' ||
             a.alertType == 'MORNING_BRIEFING').toList();
 
       default:
@@ -346,10 +333,9 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
   Widget _buildAlertList(List<Alert> alerts) {
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
-      itemCount: alerts.length + 1, // +1 for the count footer
+      itemCount: alerts.length + 1,
       itemBuilder: (context, index) {
         if (index == alerts.length) {
-          // Footer
           return Padding(
             padding: const EdgeInsets.only(top: 8, bottom: 20),
             child: Center(
@@ -379,7 +365,6 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
     return Dismissible(
       key: Key(alert.id),
       direction: DismissDirection.horizontal,
-      // Swipe LEFT = dismiss (red X) — shown on the right side
       secondaryBackground: Container(
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: 20),
@@ -391,7 +376,6 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
         child: const Icon(Icons.close_rounded,
             color: DesignTokens.crimsonWarning),
       ),
-      // Swipe RIGHT = star/journal (gold bookmark) — shown on the left side
       background: Container(
         alignment: Alignment.centerLeft,
         padding: const EdgeInsets.only(left: 20),
@@ -405,16 +389,14 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
       ),
       confirmDismiss: (direction) async {
         if (direction == DismissDirection.startToEnd) {
-          // Swipe right — star it, but do NOT remove from feed
           final db = ref.read(appDatabaseProvider);
           await (db.update(db.alerts)
                 ..where((a) => a.id.equals(alert.id)))
               .write(AlertsCompanion(
             snoozedUntil: drift.Value(DateTime(9999, 1, 1)),
           ));
-          return false; // card stays in the feed
+          return false;
         }
-        // Swipe left — confirm dismiss
         return true;
       },
       onDismissed: (direction) async {

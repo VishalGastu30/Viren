@@ -3,6 +3,7 @@ import '../../core/ai/model_download_service.dart';
 import '../../core/market/market_knowledge_service.dart';
 import 'chat_message.dart';
 import 'portfolio_analytics_engine.dart';
+import '../../core/insights/rss_fetcher.dart';
 
 class AssistantService {
   static const _channel = MethodChannel('com.viren.viren/pdf_crypto');
@@ -41,6 +42,22 @@ class AssistantService {
 
       // ── Detect intent ──────────────────────────────────────────────────
       final intent = PortfolioAnalyticsEngine.detectIntent(userMessage);
+
+      // ── Live news fetch if question needs external context ─────────────
+      String liveNewsContext = '';
+      final newsAssetClass = _detectNewsIntent(userMessage, portfolioContext);
+      if (newsAssetClass != null) {
+        try {
+          final newsItems = await RssFetcher.fetchForAssetClass(
+            assetClass: newsAssetClass,
+            maxItems: 4,
+            maxAgeHours: 48,
+          );
+          liveNewsContext = _buildNewsContext(newsItems);
+        } catch (_) {
+          // Non-fatal — proceed without news if fetch fails
+        }
+      }
 
       // ── Handle "what can you do" without needing portfolio data ────────
       if (intent == QuestionIntent.whatCanYouDo) {
@@ -84,6 +101,7 @@ class AssistantService {
             history: _sanitiseHistory(history),
             memoryContext: memoryContext,
             knowledge: MarketKnowledgeService.relevantSection(userMessage),
+            newsContext: liveNewsContext,
           );
         }
       } else {
@@ -94,6 +112,7 @@ class AssistantService {
           history: _sanitiseHistory(history),
           memoryContext: memoryContext,
           knowledge: MarketKnowledgeService.relevantSection(userMessage),
+          newsContext: liveNewsContext,
         );
       }
 
@@ -142,6 +161,7 @@ class AssistantService {
     required List<ChatMessage> history,
     required String memoryContext,
     required String knowledge,
+    String newsContext = '',
   }) {
     final systemBlock = '$_systemPrompt\n\n';
     final portfolioBlock = '$portfolioContext\n\n';
@@ -149,6 +169,16 @@ class AssistantService {
 
     int usedChars =
         systemBlock.length + portfolioBlock.length + userBlock.length;
+
+    // News context has HIGHEST priority after portfolio — inject first
+    String newsBlock = '';
+    if (newsContext.isNotEmpty) {
+      final candidate = '$newsContext\n\n';
+      if (usedChars + candidate.length < _maxPromptChars) {
+        newsBlock = candidate;
+        usedChars += candidate.length;
+      }
+    }
 
     String knowledgeBlock = '';
     if (knowledge.isNotEmpty) {
@@ -183,6 +213,7 @@ class AssistantService {
 
     final full = systemBlock +
         portfolioBlock +
+        newsBlock +
         knowledgeBlock +
         memoryBlock +
         historyBlock +
@@ -204,6 +235,56 @@ class AssistantService {
     final hasRupeeValue = portfolioContext.contains('₹');
     final hasSymbol = RegExp(r'\b[A-Z]{2,10}\b').hasMatch(portfolioContext);
     return !(hasHoldingSection && hasRupeeValue && hasSymbol);
+  }
+
+  /// Detects if a question needs live news context to answer well.
+  /// Returns the asset class key to fetch news for, or null if no news needed.
+  static String? _detectNewsIntent(
+      String message, String portfolioContext) {
+    final m = message.toLowerCase();
+
+    // Direct news-seeking questions always need RSS
+    final newsKeywords = [
+      'why is', 'why did', 'what happened', 'what\'s happening',
+      'what happened to', 'news', 'today', 'latest',
+      'fell', 'dropped', 'rising', 'falling', 'crash',
+      'market', 'rbi', 'fed', 'rate', 'inflation',
+      'should i buy', 'should i add', 'good time to',
+      'weekend', 'this week', 'monday', 'outlook',
+    ];
+    final needsNews = newsKeywords.any((kw) => m.contains(kw));
+    if (!needsNews) return null;
+
+    // Route to the right feed based on what they're asking about
+    // AND what they hold (prioritise their holdings)
+    if (m.contains('gold') || m.contains('goldbees')) { return 'gold'; }
+    if (m.contains('silver') || m.contains('silverietf')) { return 'silver'; }
+    if (m.contains('nifty') || m.contains('niftybees') ||
+        m.contains('market') || m.contains('sensex')) { return 'nifty'; }
+    if (m.contains('bank') || m.contains('yesbank') ||
+        m.contains('rbi') || m.contains('rate')) { return 'banking'; }
+    if (m.contains('fed') || m.contains('dollar') ||
+        m.contains('us market') || m.contains('nasdaq')) { return 'us_markets'; }
+    if (m.contains('macro') || m.contains('economy') ||
+        m.contains('gdp') || m.contains('inflation')) { return 'macro_india'; }
+
+    // General market question — use nifty/india feed by default
+    return 'nifty';
+  }
+
+  /// Builds a news context string from fetched RSS items.
+  /// Formatted to fit within the token budget.
+  static String _buildNewsContext(List<RssItem> items) {
+    if (items.isEmpty) return '';
+    final buf = StringBuffer();
+    buf.writeln('CURRENT NEWS (live, fetched now):');
+    for (final item in items.take(4)) {
+      final age = item.pubDate != null
+          ? '${DateTime.now().difference(item.pubDate!).inHours}h ago'
+          : 'recent';
+      buf.writeln('- ${item.title} [${item.source}, $age]');
+    }
+    return buf.toString().trim();
   }
 
   // ── Empty snapshot for when no DB access needed ───────────────────────────

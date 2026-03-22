@@ -21,17 +21,6 @@ class NotificationService {
 
   static ProviderContainer? _container;
 
-  /// Called once from main() with the global ProviderContainer.
-  /// Required for notification tap → deep link navigation.
-  static void setContainer(ProviderContainer container) {
-    _container = container;
-  }
-
-  static const _channelId = 'viren_insights';
-  static const _channelName = 'Viren Insights';
-  static const _channelDesc =
-      'Price alerts, news, and portfolio intelligence from Viren';
-
   // Viren's signature vibration patterns.
   // Designed to be recognisable and distinct from default Android vibrations.
   // Pattern: [delay, vibrate, pause, vibrate, ...]  in milliseconds.
@@ -44,6 +33,17 @@ class NotificationService {
 
   // Info/Success: One gentle long pulse — "here's something"
   static const _vibrationInfo = [0, 200];
+
+  /// Called once from main() with the global ProviderContainer.
+  /// Required for notification tap → deep link navigation.
+  static void setContainer(ProviderContainer container) {
+    _container = container;
+  }
+
+  static const _channelId = 'viren_insights';
+  static const _channelName = 'Viren Insights';
+  static const _channelDesc =
+      'Price alerts, news, and portfolio intelligence from Viren';
 
   /// Call once at app startup in main().
   static Future<void> initialize() async {
@@ -112,7 +112,7 @@ class NotificationService {
       priority: priority,
       ticker: 'Viren',
       styleInformation: BigTextStyleInformation(body),
-      // Each alert gets its own notification — they stack in the tray
+      // Each alert gets its own notification — no grouping
       vibrationPattern: Int64List.fromList(vibrationPattern),
       enableVibration: true,
       playSound: true,

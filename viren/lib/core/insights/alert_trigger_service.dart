@@ -31,6 +31,9 @@ class AlertTriggerService {
       'BEHAVIOUR_WARNING',
       'INACTIVITY_ALERT',
       'PORTFOLIO_MILESTONE',
+      'CALENDAR_EVENT',
+      'LTCG_COUNTDOWN',
+      'CORRELATION_RISK',
     };
     return slowTypes.contains(alertType)
         ? _dedupHoursSlow
@@ -83,6 +86,27 @@ class AlertTriggerService {
 
   // ── Price-based triggers ──────────────────────────────────────
 
+  /// Returns how many times this alert type has fired for this symbol
+  /// in the last 30 days, and when it first appeared.
+  Future<({int count, DateTime? firstFired})> _getAlertHistory(
+      String alertType, String? symbol) async {
+    final cutoff = DateTime.now().subtract(const Duration(days: 30));
+    final history = await (_db.select(_db.alerts)
+          ..where((a) =>
+              a.alertType.equals(alertType) &
+              (symbol != null
+                  ? a.relatedInstrument.equals(symbol)
+                  : a.relatedInstrument.isNull()) &
+              a.createdAt.isBiggerOrEqualValue(cutoff))
+          ..orderBy([(a) => OrderingTerm.asc(a.createdAt)]))
+        .get();
+
+    return (
+      count: history.length,
+      firstFired: history.isNotEmpty ? history.first.createdAt : null,
+    );
+  }
+
   /// Fires if holding is down drawdownPct% or more from avg cost.
   Future<void> checkDrawdown({
     required String symbol,
@@ -90,27 +114,82 @@ class AlertTriggerService {
     required double currentPrice,
     double drawdownPct = 5.0,
   }) async {
-    final changePct =
-        ((currentPrice - avgCost) / avgCost) * 100;
-    if (changePct <= -drawdownPct) {
-      await _insert(
-        alertType: 'DRAWDOWN_ALERT',
-        severity: AlertSeverity.warning,
-        title: '$symbol is down ${changePct.abs().toStringAsFixed(1)}%',
-        description:
-            'Your $symbol is now ₹${currentPrice.toStringAsFixed(2)}, '
-            'which is ${changePct.abs().toStringAsFixed(1)}% below your '
-            'average cost of ₹${avgCost.toStringAsFixed(2)}. '
-            'This may be a DCA opportunity or a signal to review your position.',
-        relatedInstrument: symbol,
-        confidence: 95,
-        triggerData: {
-          'avgCost': avgCost,
-          'currentPrice': currentPrice,
-          'changePct': changePct,
-        },
-      );
+    final changePct = ((currentPrice - avgCost) / avgCost) * 100;
+    if (changePct > -drawdownPct) return; // not in drawdown
+
+    // Check staleness — how many times has this fired before?
+    final history = await _getAlertHistory('DRAWDOWN_ALERT', symbol);
+    final weeksSinceFirst = history.firstFired != null
+        ? DateTime.now().difference(history.firstFired!).inDays ~/ 7
+        : 0;
+
+    // Escalating messages based on how long the drawdown has persisted
+    String title;
+    String description;
+    AlertSeverity severity;
+
+    if (weeksSinceFirst == 0) {
+      // Week 1: informational
+      title = '$symbol is down ${changePct.abs().toStringAsFixed(1)}%';
+      description =
+          'Your $symbol is now ₹${currentPrice.toStringAsFixed(2)}, '
+          '${changePct.abs().toStringAsFixed(1)}% below your avg cost '
+          'of ₹${avgCost.toStringAsFixed(2)}. '
+          'This may be a DCA opportunity — prices at this level '
+          'historically recover within your holding horizon.';
+      severity = AlertSeverity.warning;
+    } else if (weeksSinceFirst == 1) {
+      // Week 2: draw attention to persistence
+      title = '$symbol has been in drawdown for 2 weeks';
+      description =
+          '$symbol has been below your avg cost '
+          '(₹${avgCost.toStringAsFixed(2)}) for 2 weeks now. '
+          'Current price ₹${currentPrice.toStringAsFixed(2)} '
+          '(${changePct.abs().toStringAsFixed(1)}% below avg). '
+          'Consider: is this a broad market move, or $symbol-specific? '
+          'If broad market, your ETFs typically recover. '
+          'If stock-specific, review your thesis.';
+      severity = AlertSeverity.warning;
+    } else if (weeksSinceFirst == 2) {
+      // Week 3: position review prompt
+      title = '$symbol drawdown — week 3. Time to review.';
+      description =
+          '$symbol has been below your avg cost for 3 weeks. '
+          'Current: ₹${currentPrice.toStringAsFixed(2)} '
+          '(${changePct.abs().toStringAsFixed(1)}% below ₹${avgCost.toStringAsFixed(2)}). '
+          'Three weeks is a meaningful signal. '
+          'Ask yourself: has anything fundamental changed? '
+          'Is your original thesis still intact? '
+          'Tap "Ask Viren" for a position-specific analysis.';
+      severity = AlertSeverity.warning;
+    } else {
+      // Week 4+: critical review
+      title = '$symbol has been in drawdown for ${weeksSinceFirst + 1}+ weeks';
+      description =
+          '$symbol has been ${changePct.abs().toStringAsFixed(1)}% below your '
+          'avg cost for over a month (₹${currentPrice.toStringAsFixed(2)} vs '
+          '₹${avgCost.toStringAsFixed(2)}). '
+          'This is a long-term drawdown. '
+          'An extended review of this position is warranted. '
+          'Consider your original investment thesis carefully.';
+      severity = AlertSeverity.critical;
     }
+
+    await _insert(
+      alertType: 'DRAWDOWN_ALERT',
+      severity: severity,
+      title: title,
+      description: description,
+      relatedInstrument: symbol,
+      confidence: 95,
+      triggerData: {
+        'avgCost': avgCost,
+        'currentPrice': currentPrice,
+        'changePct': changePct,
+        'weeksSinceFirst': weeksSinceFirst,
+        'occurrenceCount': history.count,
+      },
+    );
   }
 
   /// Fires if holding recovers to within 2% of avg cost after a drawdown.

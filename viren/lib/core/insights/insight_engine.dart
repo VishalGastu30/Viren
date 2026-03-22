@@ -387,32 +387,26 @@ If not relevant to any holding, return: {"relevant": false, "symbol": null, "sco
         db: _db,
       );
     } else {
-      // Multiple queued — use smart batch summary
-      final summary = await _buildSmartBatchSummary(unnotified);
-      await NotificationService.showGroupSummary(
-        unnotified.length,
-        body: summary,
-      );
-      // Mark all as notified
-      for (final a in unnotified) {
-        try {
-          final data = jsonDecode(a.triggerData) as Map<String, dynamic>;
-          await (_db.update(_db.alerts)
-                ..where((row) => row.id.equals(a.id)))
-              .write(AlertsCompanion(
-            triggerData: drift.Value(jsonEncode({...data, 'notified': true})),
-          ));
-        } catch (_) {}
+      // Send each queued notification individually
+      for (int i = 0; i < unnotified.length; i++) {
+        final a = unnotified[i];
+        await NotificationService.showAlertNotification(
+          id: 3000 + i,
+          title: a.title,
+          body: a.description,
+          severity: a.severity,
+          payload: a.relatedInstrument != null
+              ? '/holdings/${a.relatedInstrument}'
+              : '/insights',
+          alertId: a.id,
+          db: _db,
+        );
+        await Future.delayed(const Duration(milliseconds: 150));
       }
     }
   }
 
   Future<void> _sendPendingNotifications() async {
-    // Only send notifications for alerts that haven't been notified yet.
-    // The 'notified' flag in triggerData is set to false by _insert()
-    // and to true after a notification is sent.
-    // This prevents re-sending the same alerts on every refresh.
-
     final cutoff = DateTime.now().subtract(const Duration(minutes: 5));
 
     final recentAlerts = await (_db.select(_db.alerts)
@@ -422,43 +416,43 @@ If not relevant to any holding, return: {"relevant": false, "symbol": null, "sco
               a.alertType.isNotValue('MACRO_STATE') &
               a.alertType.isNotValue('PRICE_SNAPSHOT') &
               a.alertType.isNotValue('EMOTION_NOTE') &
+              a.alertType.isNotValue('OVERNIGHT_DATA') &
               a.alertType.isNotValue('USER_STOP_LOSS') &
               a.alertType.isNotValue('USER_PRICE_TARGET')))
         .get();
 
-    // Filter to only unnotified alerts in Dart (triggerData is JSON)
+    // Only send for unnotified alerts
     final newAlerts = recentAlerts.where((a) {
       try {
         final data = jsonDecode(a.triggerData) as Map<String, dynamic>;
         return data['notified'] == false;
       } catch (_) {
-        return true;
+        return true; // treat as unnotified if flag missing
       }
     }).toList();
 
     if (newAlerts.isEmpty) return;
 
-    // Batch: if more than 3 new alerts, send a summary
-    if (newAlerts.length > 3) {
-      final summary = await _buildSmartBatchSummary(newAlerts);
-      await NotificationService.showGroupSummary(
-          newAlerts.length, body: summary);
-      for (final a in newAlerts) {
-        await _markNotified(a);
-      }
-      return;
-    }
-
+    // Check quiet hours once for the batch
     final quietHours = await NotificationService.isQuietHours();
-    int notifId = 1000;
-    for (final alert in newAlerts) {
-      // If quiet hours are active and alert is not critical, don't send;
-      // leave notified=false so _flushQueuedNotifications handles it later.
-      final isCritical = alert.severity == AlertSeverity.critical;
-      if (quietHours && !isCritical) continue;
+
+    // Send INDIVIDUAL notification for each alert.
+    // Do NOT batch/group — user wants to see each one separately.
+    // Use a unique notification ID per alert (hash of alert ID).
+    for (int i = 0; i < newAlerts.length; i++) {
+      final alert = newAlerts[i];
+
+      // During quiet hours, only send critical alerts
+      if (quietHours && alert.severity != AlertSeverity.critical) {
+        // Leave notified=false so _flushQueuedNotifications handles it later
+        continue;
+      }
+
+      // Unique notification ID: use index offset from 2000 to avoid conflicts
+      final notifId = 2000 + i;
 
       await NotificationService.showAlertNotification(
-        id: notifId++,
+        id: notifId,
         title: alert.title,
         body: alert.description,
         severity: alert.severity,
@@ -468,7 +462,10 @@ If not relevant to any holding, return: {"relevant": false, "symbol": null, "sco
         alertId: alert.id,
         db: _db,
       );
-      await _markNotified(alert);
+
+      // Small delay between notifications so they stack properly
+      // in the notification tray instead of collapsing
+      await Future.delayed(const Duration(milliseconds: 150));
     }
   }
 

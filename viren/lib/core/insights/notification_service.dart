@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -30,6 +31,19 @@ class NotificationService {
   static const _channelName = 'Viren Insights';
   static const _channelDesc =
       'Price alerts, news, and portfolio intelligence from Viren';
+
+  // Viren's signature vibration patterns.
+  // Designed to be recognisable and distinct from default Android vibrations.
+  // Pattern: [delay, vibrate, pause, vibrate, ...]  in milliseconds.
+
+  // Critical: Three sharp pulses — urgent, impossible to miss
+  static const _vibrationCritical = [0, 80, 60, 80, 60, 300];
+
+  // Warning: Two medium pulses — "pay attention"
+  static const _vibrationWarning = [0, 120, 80, 120];
+
+  // Info/Success: One gentle long pulse — "here's something"
+  static const _vibrationInfo = [0, 200];
 
   /// Call once at app startup in main().
   static Future<void> initialize() async {
@@ -83,6 +97,13 @@ class NotificationService {
     final importance = _severityToImportance(severity);
     final priority = _severityToPriority(severity);
 
+    // Select vibration pattern based on severity
+    final vibrationPattern = switch (severity) {
+      AlertSeverity.critical => _vibrationCritical,
+      AlertSeverity.warning  => _vibrationWarning,
+      _                      => _vibrationInfo,
+    };
+
     final androidDetails = AndroidNotificationDetails(
       _channelId,
       _channelName,
@@ -91,8 +112,10 @@ class NotificationService {
       priority: priority,
       ticker: 'Viren',
       styleInformation: BigTextStyleInformation(body),
-      // Group notifications to avoid spam
-      groupKey: 'viren_insights_group',
+      // Each alert gets its own notification — they stack in the tray
+      vibrationPattern: Int64List.fromList(vibrationPattern),
+      enableVibration: true,
+      playSound: true,
     );
 
     await _plugin.show(

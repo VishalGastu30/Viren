@@ -6,6 +6,7 @@ import '../../../core/database/app_database.dart';
 import '../../../core/database/providers/database_providers.dart';
 import '../../../core/database/providers/journal_providers.dart';
 import '../../../core/insights/ask_viren_launcher.dart';
+import '../../../core/market/live_price_cache.dart';
 import '../../../core/navigation/deep_link_service.dart';
 import '../../../core/theme/design_tokens.dart';
 
@@ -227,6 +228,11 @@ class InsightCard extends ConsumerWidget {
     final prompt = AskVirenLauncher.buildPrompt(
       alert: alert,
       holdings: holdings,
+      currentPrices: Map.fromEntries(
+        ref.read(livePriceCacheProvider).quotes.entries.map(
+          (e) => MapEntry(e.key, e.value.currentPrice),
+        ),
+      ),
     );
 
     // Write to deepLinkProvider.

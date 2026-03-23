@@ -21,6 +21,7 @@ void main() {
           totalQuantity: 10,
           averagePrice: 100,
           investedValue: 1000,
+          realizedPnL: 0.0,
           lastUpdated: DateTime.now(),
         ),
         Holding(
@@ -29,6 +30,7 @@ void main() {
           totalQuantity: 5,
           averagePrice: 800,
           investedValue: 4000, // 4000/5000 = 80% (exceeds 25%)
+          realizedPnL: 0.0,
           lastUpdated: DateTime.now(),
         ),
       ];
@@ -60,6 +62,7 @@ void main() {
           totalQuantity: 10,
           averagePrice: 3000, // VWAP is 3000
           investedValue: 30000,
+          realizedPnL: 0.0,
           lastUpdated: DateTime.now(),
         ),
       ];

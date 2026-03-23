@@ -252,7 +252,10 @@ class HoldingsListScreen extends ConsumerStatefulWidget {
       _HoldingsListScreenState();
 }
 
-class _HoldingsListScreenState extends ConsumerState<HoldingsListScreen> {
+class _HoldingsListScreenState extends ConsumerState<HoldingsListScreen> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   bool _isLoaded = false;
   HoldingSort _sortBy = HoldingSort.returnPct;
   bool _isLoadingPrices = false;
@@ -475,6 +478,7 @@ class _HoldingsListScreenState extends ConsumerState<HoldingsListScreen> {
   // ── Build ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     // Listen to live price cache and update rows if prices change
     ref.listen<LivePriceState>(livePriceCacheProvider, (previous, next) {
       if (_liveHoldings.isEmpty) return;
@@ -527,7 +531,7 @@ class _HoldingsListScreenState extends ConsumerState<HoldingsListScreen> {
         final totalReturnPct = totalInvested > 0 ? (totalPnL / totalInvested) * 100 : 0.0;
         
         setState(() {
-          _liveHoldings = _sortHoldings(updatedList);
+          _liveHoldings = updatedList; // Do not resort on price tick
           _totals = PortfolioTotals(
             totalInvested: totalInvested,
             totalCurrentValue: totalCurrentValue,
@@ -649,9 +653,13 @@ class _HoldingsListScreenState extends ConsumerState<HoldingsListScreen> {
                     SliverList(
                       delegate: SliverChildBuilderDelegate(
                         (context, index) {
-                          final lh = _liveHoldings.isNotEmpty
-                              ? _liveHoldings[index]
-                              : LiveHolding(holding: holdings[index]);
+                          final resolvedHoldings = _liveHoldings.isNotEmpty
+                              ? _liveHoldings
+                              : holdings.map((h) => LiveHolding(holding: h)).toList();
+                          final activeHoldings = resolvedHoldings.where((h) => h.holding.totalQuantity > 0).toList();
+                          
+                          if (index >= activeHoldings.length) return null;
+                          final lh = activeHoldings[index];
 
                           return TweenAnimationBuilder<double>(
                             tween: Tween<double>(
@@ -675,8 +683,67 @@ class _HoldingsListScreenState extends ConsumerState<HoldingsListScreen> {
                           );
                         },
                         childCount: _liveHoldings.isNotEmpty
-                            ? _liveHoldings.length
-                            : holdings.length,
+                            ? _liveHoldings.where((h) => h.holding.totalQuantity > 0).length
+                            : holdings.where((h) => h.totalQuantity > 0).length,
+                      ),
+                    ),
+
+                    SliverToBoxAdapter(
+                      child: Builder(builder: (context) {
+                        final count = _liveHoldings.isNotEmpty
+                            ? _liveHoldings.where((h) => h.holding.totalQuantity <= 0).length
+                            : holdings.where((h) => h.totalQuantity <= 0).length;
+                        if (count == 0) return const SizedBox.shrink();
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 32, left: 24, bottom: 8),
+                          child: Text(
+                            "EXITED POSITIONS",
+                            style: TextStyle(
+                              color: DesignTokens.textMediumContrast.withValues(alpha: 0.5),
+                              fontSize: 10,
+                              letterSpacing: 1.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        );
+                      }),
+                    ),
+
+                    SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          final resolvedHoldings = _liveHoldings.isNotEmpty
+                              ? _liveHoldings
+                              : holdings.map((h) => LiveHolding(holding: h)).toList();
+                          final exitedHoldings = resolvedHoldings.where((h) => h.holding.totalQuantity <= 0).toList();
+                          
+                          if (index >= exitedHoldings.length) return null;
+                          final lh = exitedHoldings[index];
+
+                          return TweenAnimationBuilder<double>(
+                            tween: Tween<double>(
+                                begin: 0, end: _isLoaded ? 1 : 0),
+                            duration: AnimationPresets.durationNormal +
+                                AnimationPresets.staggerItem(index),
+                            curve: AnimationPresets.entrance,
+                            builder: (context, val, child) => Opacity(
+                              opacity: val * 0.6, // Muted opacity for exited
+                              child: Transform.translate(
+                                offset: Offset(
+                                  0,
+                                  20 *
+                                      (1 - val) *
+                                      AnimationPresets.parallaxFactor,
+                                ),
+                                child: child,
+                              ),
+                            ),
+                            child: _HoldingRow(liveHolding: lh, isExited: true),
+                          );
+                        },
+                        childCount: _liveHoldings.isNotEmpty
+                            ? _liveHoldings.where((h) => h.holding.totalQuantity <= 0).length
+                            : holdings.where((h) => h.totalQuantity <= 0).length,
                       ),
                     ),
                     const SliverToBoxAdapter(
@@ -914,7 +981,8 @@ class _SummaryDetail extends StatelessWidget {
 
 class _HoldingRow extends StatefulWidget {
   final LiveHolding liveHolding;
-  const _HoldingRow({required this.liveHolding});
+  final bool isExited;
+  const _HoldingRow({required this.liveHolding, this.isExited = false});
 
   @override
   State<_HoldingRow> createState() => _HoldingRowState();
@@ -978,7 +1046,7 @@ class _HoldingRowState extends State<_HoldingRow> {
                       Row(
                         children: [
                           Text(
-                            '${h.totalQuantity.toStringAsFixed(0)} qty',
+                            widget.isExited ? '0 qty' : '${h.totalQuantity.toStringAsFixed(0)} qty',
                             style: Theme.of(context)
                                 .textTheme
                                 .bodySmall

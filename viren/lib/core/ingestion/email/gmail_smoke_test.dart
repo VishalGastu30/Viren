@@ -160,7 +160,7 @@ class GmailSmokeTest {
       final gmailApi = gmail.GmailApi(authClient);
 
       // THE query — just senders, nothing else
-      const q = 'from:digidocemail@sbicapsec.com filename:CNB';
+      const q = 'from:digidocemail@sbicapsec.com filename:CNB OR from:nse-direct@nse.co.in has:attachment';
 
       _log.i('Querying Gmail: q="$q"');
 

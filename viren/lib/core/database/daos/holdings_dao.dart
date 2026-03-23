@@ -58,7 +58,7 @@ class HoldingsDao extends DatabaseAccessor<AppDatabase>
       if (trade.tradeType == TradeType.buy) {
         agg[trade.instrumentSymbol]!.addBuy(trade.quantity, trade.pricePerUnit);
       } else {
-        agg[trade.instrumentSymbol]!.addSell(trade.quantity);
+        agg[trade.instrumentSymbol]!.addSell(trade.quantity, trade.pricePerUnit);
       }
     }
 
@@ -66,17 +66,16 @@ class HoldingsDao extends DatabaseAccessor<AppDatabase>
     await transaction(() async {
       await delete(holdings).go();
       for (final entry in agg.values) {
-        if (entry.netQuantity > 0) {
-          await into(holdings).insertOnConflictUpdate(
-            HoldingsCompanion.insert(
-              instrumentSymbol: entry.symbol,
-              instrumentName: entry.name,
-              totalQuantity: entry.netQuantity,
-              averagePrice: entry.vwap,
-              investedValue: entry.netQuantity * entry.vwap,
-            ),
-          );
-        }
+        await into(holdings).insertOnConflictUpdate(
+          HoldingsCompanion.insert(
+            instrumentSymbol: entry.symbol,
+            instrumentName: entry.name,
+            totalQuantity: entry.netQuantity,
+            averagePrice: entry.vwap,
+            investedValue: entry.netQuantity * entry.vwap,
+            realizedPnL: Value(entry.realizedPnL),
+          ),
+        );
       }
     });
   }
@@ -90,6 +89,7 @@ class _SymbolAggregator {
   double _totalBuyValue = 0;
   double _totalBuyQty = 0;
   double _totalSellQty = 0;
+  double _totalSellValue = 0;
 
   _SymbolAggregator({required this.symbol, required this.name});
 
@@ -98,12 +98,16 @@ class _SymbolAggregator {
     _totalBuyQty += qty;
   }
 
-  void addSell(double qty) {
+  void addSell(double qty, double price) {
     _totalSellQty += qty;
+    _totalSellValue += qty * price;
   }
 
   double get netQuantity => _totalBuyQty - _totalSellQty;
 
   double get vwap =>
       _totalBuyQty > 0 ? _totalBuyValue / _totalBuyQty : 0;
+      
+  double get realizedPnL => 
+      _totalSellQty > 0 ? _totalSellValue - (_totalSellQty * vwap) : 0.0;
 }

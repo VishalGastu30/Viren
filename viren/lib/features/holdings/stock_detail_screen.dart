@@ -780,6 +780,8 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
               children: [
                 _buildPositionCard(),
                 const SizedBox(height: 14),
+                _buildBrokerageBreakdownCard(),
+                const SizedBox(height: 14),
                 _buildEntryAnalysisCard(),
                 const SizedBox(height: 48),
               ],
@@ -1531,6 +1533,96 @@ class _StockDetailScreenState extends ConsumerState<StockDetailScreen>
                       : FontWeight.normal,
                 )),
       ),
+    );
+  }
+
+  // ─── Brokerage Breakdown ───────────────────────────────────────────────────
+  Widget _chargeItem(String label, num value) {
+    if (value <= 0) return const SizedBox.shrink();
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: const TextStyle(color: DesignTokens.textMediumContrast, fontSize: 13)),
+        Text('₹${value.toStringAsFixed(2)}', style: const TextStyle(color: DesignTokens.textHighContrast, fontSize: 13, fontWeight: FontWeight.w500)),
+      ],
+    );
+  }
+
+  Widget _buildBrokerageBreakdownCard() {
+    return ref.watch(allTradesProvider).when(
+      data: (allTrades) {
+        final symbolTrades = allTrades.where((t) => t.trade.instrumentSymbol == widget.holding.instrumentSymbol).toList();
+        
+        double brk = 0;
+        double stt = 0;
+        double gst = 0;
+        double oth = 0;
+        
+        for (final tw in symbolTrades) {
+          final t = tw.trade;
+          if (t.tradeType == db_enums.TradeType.buy) {
+            brk += (t.brokerage ?? 0);
+            stt += (t.stt ?? 0);
+            gst += (t.gst ?? 0);
+            oth += (t.otherLevies ?? 0);
+          }
+        }
+        
+        final num totalCharges = brk + stt + gst + oth;
+        if (totalCharges <= 0) return const SizedBox.shrink();
+
+        return Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: DesignTokens.graphiteSurface,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: DesignTokens.obsidianTeal.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.receipt_long_rounded,
+                        color: DesignTokens.obsidianTeal, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text('Taxes & Charges',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: -0.5,
+                        )),
+                  ),
+                  Text(
+                    '₹${totalCharges.toStringAsFixed(2)}',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: DesignTokens.textHighContrast,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              _chargeItem('Brokerage', brk),
+              const SizedBox(height: 12),
+              _chargeItem('STT', stt),
+              const SizedBox(height: 12),
+              _chargeItem('GST (18%)', gst),
+              const SizedBox(height: 12),
+              _chargeItem('Other Levies', oth),
+            ],
+          ),
+        );
+      },
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
     );
   }
 

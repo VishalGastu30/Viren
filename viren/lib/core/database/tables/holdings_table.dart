@@ -23,6 +23,9 @@ class Holdings extends Table {
   /// Total capital deployed (averagePrice × totalQuantity).
   RealColumn get investedValue => real().named('invested_value')();
 
+  /// Realized Profit & Loss calculated.
+  RealColumn get realizedPnL => real().named('realized_pnl').withDefault(const Constant(0.0))();
+
   /// UTC timestamp of the last cache rebuild.
   DateTimeColumn get lastUpdated =>
       dateTime().named('last_updated').withDefault(currentDateAndTime)();

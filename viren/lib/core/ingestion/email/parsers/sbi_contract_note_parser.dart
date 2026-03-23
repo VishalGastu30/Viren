@@ -1,6 +1,6 @@
+import '../isin_resolver.dart';
 import 'dart:developer' as developer;
 import '../../../database/enums.dart';
-import '../../../market/nse_calendar.dart';
 import '../broker_email_parser.dart';
 import '../document_content_parser.dart';
 import '../pdf_classifier.dart';
@@ -18,6 +18,8 @@ import '../pdf_classifier.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 
 class SbiContractNoteParser implements DocumentContentParser {
+  final IsinResolver resolver;
+  SbiContractNoteParser(this.resolver);
   @override
   PdfDocumentType get supportedType => PdfDocumentType.sbiContractNote;
 
@@ -28,7 +30,7 @@ class SbiContractNoteParser implements DocumentContentParser {
     // ── EXISTING ENTRIES (keep all) ──
     'INF204KB17I5': 'GOLDBEES',
     'INF204KB14I2': 'NIFTYBEES',
-    'INF109KC1Y56': 'ICICISILVE',
+    'INF109KC1Y56': 'SILVERIETF',
     'INF204KB19I1': 'LIQUIDBEES',
     'INF460K01257': 'JUNIORBEES',
     'INF200K01TA2': 'SETFNIF50',
@@ -44,7 +46,7 @@ class SbiContractNoteParser implements DocumentContentParser {
     'INE040A01034': 'HDFCBANK',
     'INE090A01021': 'ICICIBANK',
     'INE238A01034': 'AXISBANK',
-    'INE669E01016': 'YESBANK',
+    'INE669E01016': 'IDEA',
     'INE002A01018': 'RELIANCE',
     'INE030A01027': 'ITC',
     'INE101A01026': 'COALINDIA',
@@ -64,12 +66,12 @@ class SbiContractNoteParser implements DocumentContentParser {
   };
 
   @override
-  EmailParseResult parseRawText({
+  Future<EmailParseResult> parseRawText({
     required String rawText,
     required String filename,
     required String attachmentHash,
     required DateTime emailDate,
-  }) {
+  }) async {
     final trades = <EmailParsedTrade>[];
     final warnings = <String>[];
     final errors = <String>[];
@@ -109,11 +111,10 @@ class SbiContractNoteParser implements DocumentContentParser {
     if (tradeDateMatch != null) {
       final parsed = _parseNseDate(tradeDateMatch.group(1)!);
       if (parsed != null) {
+        // Use the date exactly as stated in the PDF.
+        // Do NOT apply NseCalendar adjustments — this causes off-by-one
+        // date errors. The PDF date IS the authoritative trade date.
         tradeDate = parsed;
-        if (!NseCalendar.isMarketDay(tradeDate)) {
-          // If headers state a non-market day (e.g., Saturday), it's a typo.
-          tradeDate = NseCalendar.nearestTradingDay(tradeDate);
-        }
         tradeDateFromPdf = true;
       }
     }
@@ -201,47 +202,155 @@ class SbiContractNoteParser implements DocumentContentParser {
         name: 'SbiContractNoteParser',
       );
 
-      final oldFormatBPattern = RegExp(
-        r'(IN[A-Z0-9]{10})\s+'    // ISIN (group 1)
-        r'[\w\s\-\.]+?\s+'         // Security name (skip)
-        r'([\d.]+)\s+'             // Bought qty (group 2)
-        r'[\d.]+\s+'               // WAP (skip)
-        r'([\d.]+)\s+'             // Brokerage per share (group 3)
-        r'[\d.]+\s+'               // WAP after brokerage (skip)
-        r'([\d.]+)',               // Total BUY value (group 4)
-        caseSensitive: true,
+      // ── Isolate the Equity Segment section ────────────────────────────
+      // The Equity Segment is bounded by "Equity Segment" header and
+      // "Obligation details" or "Exchange-wise details" footer.
+      // Registration numbers like INZ000200032 appear outside this
+      // section and must be excluded.
+      String equitySection = normalized;
+      final eqStart = normalized.indexOf('Equity Segment');
+      final eqEnd = normalized.indexOf('Obligation details');
+      final eqEnd2 = normalized.indexOf('Exchange-wise details');
+      if (eqStart >= 0) {
+        final endBound = eqEnd > eqStart ? eqEnd 
+            : eqEnd2 > eqStart ? eqEnd2 
+            : normalized.length;
+        equitySection = normalized.substring(eqStart, endBound);
+      }
+
+      developer.log(
+        '[SBI_CN_OLDFMT] Equity section length: ${equitySection.length}\n'
+        'First 500 chars: ${equitySection.substring(0, equitySection.length.clamp(0, 500))}',
+        name: 'SbiContractNoteParser',
       );
 
-      for (final match in oldFormatBPattern.allMatches(normalized)) {
-        try {
-          final isin = match.group(1)!;
-          // Skip if this ISIN is a header/footer row (too many false positives)
-          if (!_isinToSymbol.containsKey(isin) && isin.length != 12) continue;
+      // Only match real trade ISINs (INE=equity, INF=MF/ETF)
+      // Skip INZ (registration), INA/INB/INC etc.
+      final isinRegex = RegExp(r'(IN[EF][A-Z0-9]{9})');
+      final isinMatches = isinRegex.allMatches(equitySection).toList();
+      
+      // Deduplicate — same ISIN can appear twice (data + disclaimer)
+      final seenIsins = <String>{};
+      final uniqueIsinMatches = <RegExpMatch>[];
+      for (final m in isinMatches) {
+        final isin = m.group(1)!;
+        if (seenIsins.add(isin)) {
+          uniqueIsinMatches.add(m);
+        }
+      }
 
-          final boughtQty = double.tryParse(match.group(2)!) ?? 0;
-          if (boughtQty <= 0) continue; // SELL-only row — skip for now
+      developer.log(
+        '[SBI_CN_OLDFMT] Found ${uniqueIsinMatches.length} unique ISINs in equity section: '
+        '${uniqueIsinMatches.map((m) => m.group(1)).toList()}',
+        name: 'SbiContractNoteParser',
+      );
+      
+      for (int i = 0; i < uniqueIsinMatches.length; i++) {
+        final match = uniqueIsinMatches[i];
+        final isin = match.group(1)!;
+        
+        final startIdx = match.start;
+        // Block ends at next unique ISIN or end of equity section
+        final endIdx = i + 1 < uniqueIsinMatches.length 
+            ? uniqueIsinMatches[i + 1].start 
+            : equitySection.length;
+        if (endIdx <= startIdx) continue;
+        
+        final block = equitySection.substring(startIdx, endIdx);
 
-          final brokeragePerShare = double.tryParse(match.group(3)!) ?? 0;
-          final totalBuyValue = double.tryParse(match.group(4)!) ?? 0;
-          final totalBrokerage = brokeragePerShare * boughtQty;
+        developer.log(
+          '[SBI_CN_OLDFMT_BLOCK] ISIN=$isin block length=${block.length}\n'
+          'Block: ${block.substring(0, block.length.clamp(0, 300))}',
+          name: 'SbiContractNoteParser',
+        );
 
-          // For old format, we don't have individual STT/GST/other per scrip
-          // Extract from page 3 obligation table (global) and apportion
-          chargesByIsin[isin] = _ScripCharges(
-            brokerage: totalBrokerage,
-            gst: 0.0,    // will be apportioned from global below
-            stt: 0.0,    // will be apportioned from global below
-            otherLevies: 0.0,
-            netAfterLevies: totalBuyValue + totalBrokerage, // approximate
-          );
+        // ── NEW: Positional numeric extraction ───────────────────────────
+        // PdfBox (sortByPosition=true) produces a flat data row after the ISIN:
+        //   ISIN DESC_WORDS buyQty WAP brokPerShare WAPafterBrok totalBuyVal
+        //   sellQty sellWAP sellBrokPerShare sellWAPafterBrok totalSellVal
+        //   netQty netObligation SYMBOL_SUFFIX
+        //
+        // Extract the text after the ISIN (skip the ISIN itself)
+        final afterIsin = block.substring(isin.length).trim();
+        
+        // Split into description (non-numeric prefix) and numeric data
+        // Description is all text before the first number
+        final firstNumMatch = RegExp(r'(\d+\.?\d*)').firstMatch(afterIsin);
+        String description = isin; // fallback
+        String numericPart = afterIsin;
+        
+        if (firstNumMatch != null) {
+          description = afterIsin.substring(0, firstNumMatch.start).trim();
+          if (description.isEmpty) description = isin;
+          numericPart = afterIsin.substring(firstNumMatch.start).trim();
+        }
 
+        // Extract all numbers from the data portion
+        final numbers = RegExp(r'[\d.]+')
+            .allMatches(numericPart)
+            .map((m) => double.tryParse(m.group(0)!) ?? 0.0)
+            .toList();
+
+        developer.log(
+          '[SBI_CN_OLDFMT_ROW] ISIN=$isin desc="$description" numbers=${numbers.length}: $numbers',
+          name: 'SbiContractNoteParser',
+        );
+
+        // Need at least 5 numbers for BUY side (qty, WAP, brok, WAPafterBrok, totalVal)
+        if (numbers.length >= 5) {
+          final buyQty = numbers[0];
+          final buyWap = numbers[1];
+          final buyBrokPerShare = numbers[2];
+          // numbers[3] = WAP after brokerage (not needed directly)
+          final totalBuyValue = numbers[4];
+
+          if (buyQty > 0) {
+            final totalBrokerage = buyBrokPerShare * buyQty;
+            chargesByIsin['${isin}_B'] = _ScripCharges(
+              brokerage: totalBrokerage,
+              gst: 0.0, stt: 0.0, otherLevies: 0.0,
+              netAfterLevies: totalBuyValue,
+              tradeType: TradeType.buy,
+              qty: buyQty,
+              isinReal: isin,
+              description: description,
+            );
+            developer.log(
+              '[SBI_CN_OLDFMT] BUY: ISIN=$isin qty=$buyQty wap=$buyWap brok=$totalBrokerage totalVal=$totalBuyValue',
+              name: 'SbiContractNoteParser',
+            );
+          }
+
+          // SELL side starts at index 5 (if present)
+          if (numbers.length >= 10) {
+            final sellQty = numbers[5];
+            final sellWap = numbers[6];
+            final sellBrokPerShare = numbers[7];
+            // numbers[8] = SELL WAP after brokerage
+            final totalSellValue = numbers[9];
+
+            if (sellQty > 0) {
+              final totalBrokerage = sellBrokPerShare * sellQty;
+              chargesByIsin['${isin}_S'] = _ScripCharges(
+                brokerage: totalBrokerage,
+                gst: 0.0, stt: 0.0, otherLevies: 0.0,
+                netAfterLevies: totalSellValue,
+                tradeType: TradeType.sell,
+                qty: sellQty,
+                isinReal: isin,
+                description: description,
+              );
+              developer.log(
+                '[SBI_CN_OLDFMT] SELL: ISIN=$isin qty=$sellQty wap=$sellWap brok=$totalBrokerage totalVal=$totalSellValue',
+                name: 'SbiContractNoteParser',
+              );
+            }
+          }
+        } else {
           developer.log(
-            '[SBI_CN_OLDFMT_B] ISIN=$isin qty=$boughtQty '
-            'brok=$totalBrokerage totalValue=$totalBuyValue',
+            '[SBI_CN_OLDFMT] SKIP: ISIN=$isin only ${numbers.length} numbers found (need >= 5)',
             name: 'SbiContractNoteParser',
           );
-        } catch (e) {
-          warnings.add('Old format Annexure B row error: $e');
         }
       }
 
@@ -266,9 +375,13 @@ class SbiContractNoteParser implements DocumentContentParser {
             gst: globalGst * proportion,
             stt: globalStt * proportion,
             otherLevies: entry.value.otherLevies,
-            netAfterLevies: entry.value.netAfterLevies +
-                (globalStt * proportion) +
-                (globalGst * proportion),
+            netAfterLevies: entry.value.tradeType == TradeType.sell 
+                ? entry.value.netAfterLevies - (globalStt * proportion) - (globalGst * proportion)
+                : entry.value.netAfterLevies + (globalStt * proportion) + (globalGst * proportion),
+            tradeType: entry.value.tradeType,
+            qty: entry.value.qty,
+            isinReal: entry.value.isinReal,
+            description: entry.value.description,
           );
         }
         chargesByIsin.clear();
@@ -286,10 +399,15 @@ class SbiContractNoteParser implements DocumentContentParser {
 
     // FORMAT V2 (2026): Order No + Trade No explicitly separated
     // 1300000022891224 10:15:05 02092971 10:15:05 ICICIPRAMC-Cash-INF109KC1Y56 B 4 233.52
+    // V2 — handles BOTH normal CNBs and old PDFs where PdfBox drops
+    // tab characters (character 9 = \t, "No Unicode mapping for .notdef (9)")
+    // causing columns to merge without whitespace separator.
+    // Using \s* instead of \s+ between Trade No and Trade Time.
     final annexureAV2 = RegExp(
       r'(\d{13,18})\s+'
       r'(\d{2}:\d{2}:\d{2})\s+'
-      r'(\d{6,10})\s+'
+      r'(\d{6,10})'            // Trade No — do NOT require \s+ after
+      r'\s*'                   // 0 or more spaces (PdfBox may drop the tab)
       r'(\d{2}:\d{2}:\d{2})\s+'
       r'([\w\s\-\.]+?)'
       r'-Cash-(IN[A-Z0-9]{10})\s+'
@@ -359,7 +477,7 @@ class SbiContractNoteParser implements DocumentContentParser {
             final side = match.group(2)!;
             final qty = double.parse(match.group(3)!);
             final price = double.parse(match.group(4)!);
-            final symbol = _isinToSymbol[isin] ?? _symbolFromDescription(isin);
+            final symbol = _isinToSymbol[isin] ?? await resolver.resolve(isin, isin, fallbackDeriver: _symbolFromDescription);
             if (!_isValidNseSymbol(symbol)) {
               rowsRejected++;
               warnings.add('Rejected invalid symbol "$symbol" (ISIN: $isin). Skipping.');
@@ -426,7 +544,7 @@ class SbiContractNoteParser implements DocumentContentParser {
           }
 
           final tradeType = side == 'B' ? TradeType.buy : TradeType.sell;
-          final symbol = _isinToSymbol[isin] ?? _symbolFromDescription(description);
+          final symbol = _isinToSymbol[isin] ?? await resolver.resolve(isin, description, fallbackDeriver: _symbolFromDescription);
 
           if (!_isValidNseSymbol(symbol)) {
             rowsRejected++;
@@ -488,75 +606,51 @@ class SbiContractNoteParser implements DocumentContentParser {
     }
 
     // ── Last resort: If ALL patterns found 0 trades but Annexure B has data ──
-    // This handles completely unexpected formats — at least insert placeholder
     if (trades.isEmpty && chargesByIsin.isNotEmpty) {
       developer.log(
-        '[SBI_CN] ALL regex patterns failed. Annexure B has '
-        '${chargesByIsin.length} ISINs. Attempting ISIN-only extraction...',
+        '[SBI_CN] ALL regex patterns failed. Generating trades directly from Annexure B charges...',
         name: 'SbiContractNoteParser',
       );
 
-      // Search for each known ISIN in the document and find qty+price near it
       for (final entry in chargesByIsin.entries) {
-        final isin = entry.key;
+        final keyId = entry.key; // e.g. INE669E01016_S
         final charges = entry.value;
-        final symbol = _isinToSymbol[isin];
-        if (symbol == null) continue;
+        final isin = charges.isinReal ?? keyId.split('_').first;
+        final desc = charges.description ?? isin;
+        final symbol = _isinToSymbol[isin] ?? await resolver.resolve(isin, desc, fallbackDeriver: _symbolFromDescription);
         if (!_isValidNseSymbol(symbol)) continue;
 
-        // Find this ISIN in the text and extract qty/price from nearby context
-        final isinIdx = normalized.indexOf(isin);
-        if (isinIdx < 0) continue;
-
-        // Look in a 200-char window after the ISIN
-        final window = normalized.substring(
-          isinIdx,
-          (isinIdx + 200).clamp(0, normalized.length),
-        );
-
-        // Pattern: B/S qty price (common table format near ISIN)
-        final nearbyPattern = RegExp(
-          r'(B|S)\s+(\d+)\s+([\d.]+)',
-          caseSensitive: true,
-        );
-        final nearbyMatch = nearbyPattern.firstMatch(window);
-        if (nearbyMatch == null) continue;
-
-        final side = nearbyMatch.group(1)!;
-        final qty = double.tryParse(nearbyMatch.group(2)!);
-        final price = double.tryParse(nearbyMatch.group(3)!);
-        if (qty == null || price == null || qty <= 0 || price <= 0) continue;
-
-        final totalCharges = charges.brokerage + charges.gst +
-            charges.stt + charges.otherLevies;
-        final trueCostBasis = ((qty * price) + totalCharges) / qty;
-
-        trades.add(EmailParsedTrade(
-          symbol: symbol,
-          instrumentName: symbol,
-          exchange: 'NSE',
-          tradeType: side == 'B' ? TradeType.buy : TradeType.sell,
-          quantity: qty,
-          pricePerUnit: price,
-          tradeDate: tradeDate,
-          broker: 'SBI Securities',
-          confidence: 70,
-          sourceMessageHash: attachmentHash,
-          source: TradeSource.sbiContractNote,
-          brokerage: charges.brokerage,
-          stt: charges.stt,
-          gst: charges.gst,
-          otherLevies: charges.otherLevies,
-          netAmountAfterLevies: charges.netAfterLevies,
-          trueCostBasis: trueCostBasis,
-          warnings: ['Extracted via ISIN-only last-resort parser (confidence 70%)'],
-        ));
-        rowsParsed++;
-        developer.log(
-          '[SBI_CN_LASTRESORT] $symbol ${side == 'B' ? 'BUY' : 'SELL'} '
-          '$qty @ ₹$price via ISIN-only fallback',
-          name: 'SbiContractNoteParser',
-        );
+        final qty = charges.qty;
+        final side = charges.tradeType;
+        
+        if (qty != null && side != null && qty > 0) {
+           final totalCharges = charges.totalCharges;
+           final tradeValue = charges.netAfterLevies - totalCharges;
+           final price = tradeValue / qty;
+           
+           trades.add(EmailParsedTrade(
+             symbol: symbol,
+             instrumentName: symbol,
+             exchange: 'NSE',
+             tradeType: side,
+             quantity: qty,
+             pricePerUnit: price,
+             tradeDate: tradeDate,
+             broker: 'SBI Securities',
+             confidence: tradeDateFromPdf ? 90 : 75,
+             sourceMessageHash: attachmentHash,
+             tradeNo: 'CNB_\$isin',
+             source: TradeSource.sbiContractNote,
+             brokerage: charges.brokerage,
+             stt: charges.stt,
+             gst: charges.gst,
+             otherLevies: charges.otherLevies,
+             netAmountAfterLevies: charges.netAfterLevies,
+             trueCostBasis: charges.netAfterLevies / qty,
+             warnings: ['Fallback to Annexure B Equity Segment Extraction'],
+           ));
+           rowsParsed++;
+        }
       }
     }
 
@@ -711,6 +805,10 @@ class _ScripCharges {
   final double stt;
   final double otherLevies;
   final double netAfterLevies;
+  final TradeType? tradeType;
+  final double? qty;
+  final String? isinReal;
+  final String? description;
 
   double get totalCharges => brokerage + gst + stt + otherLevies;
 
@@ -720,5 +818,9 @@ class _ScripCharges {
     required this.stt,
     required this.otherLevies,
     required this.netAfterLevies,
+    this.tradeType,
+    this.qty,
+    this.isinReal,
+    this.description,
   });
 }

@@ -7,12 +7,12 @@ class SbiFundsStatementParser implements DocumentContentParser {
   PdfDocumentType get supportedType => PdfDocumentType.sbiFundsStatement;
 
   @override
-  EmailParseResult parseRawText({
+  Future<EmailParseResult> parseRawText({
     required String rawText,
     required String filename,
     required String attachmentHash,
     required DateTime emailDate,
-  }) {
+  }) async {
     // Currently, Funds/Periodic statements are used strictly for manual
     // audit/reconciliation, not automatic trade ingestion.
     return EmailParseResult(

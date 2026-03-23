@@ -255,6 +255,49 @@ class $TradesTable extends Trades with TableInfo<$TradesTable, Trade> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _isinMeta = const VerificationMeta('isin');
+  @override
+  late final GeneratedColumn<String> isin = GeneratedColumn<String>(
+    'isin',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _settlementDateMeta = const VerificationMeta(
+    'settlementDate',
+  );
+  @override
+  late final GeneratedColumn<DateTime> settlementDate =
+      GeneratedColumn<DateTime>(
+        'settlement_date',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _tradeTimeMeta = const VerificationMeta(
+    'tradeTime',
+  );
+  @override
+  late final GeneratedColumn<String> tradeTime = GeneratedColumn<String>(
+    'trade_time',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _orderNoMeta = const VerificationMeta(
+    'orderNo',
+  );
+  @override
+  late final GeneratedColumn<String> orderNo = GeneratedColumn<String>(
+    'order_no',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _parseConfidenceMeta = const VerificationMeta(
     'parseConfidence',
   );
@@ -327,6 +370,10 @@ class $TradesTable extends Trades with TableInfo<$TradesTable, Trade> {
     sourceReference,
     importId,
     rawTradeNo,
+    isin,
+    settlementDate,
+    tradeTime,
+    orderNo,
     parseConfidence,
     createdAt,
     updatedAt,
@@ -502,6 +549,33 @@ class $TradesTable extends Trades with TableInfo<$TradesTable, Trade> {
         ),
       );
     }
+    if (data.containsKey('isin')) {
+      context.handle(
+        _isinMeta,
+        isin.isAcceptableOrUnknown(data['isin']!, _isinMeta),
+      );
+    }
+    if (data.containsKey('settlement_date')) {
+      context.handle(
+        _settlementDateMeta,
+        settlementDate.isAcceptableOrUnknown(
+          data['settlement_date']!,
+          _settlementDateMeta,
+        ),
+      );
+    }
+    if (data.containsKey('trade_time')) {
+      context.handle(
+        _tradeTimeMeta,
+        tradeTime.isAcceptableOrUnknown(data['trade_time']!, _tradeTimeMeta),
+      );
+    }
+    if (data.containsKey('order_no')) {
+      context.handle(
+        _orderNoMeta,
+        orderNo.isAcceptableOrUnknown(data['order_no']!, _orderNoMeta),
+      );
+    }
     if (data.containsKey('parse_confidence')) {
       context.handle(
         _parseConfidenceMeta,
@@ -636,6 +710,22 @@ class $TradesTable extends Trades with TableInfo<$TradesTable, Trade> {
         DriftSqlType.string,
         data['${effectivePrefix}raw_trade_no'],
       ),
+      isin: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}isin'],
+      ),
+      settlementDate: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}settlement_date'],
+      ),
+      tradeTime: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}trade_time'],
+      ),
+      orderNo: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}order_no'],
+      ),
       parseConfidence: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}parse_confidence'],
@@ -739,6 +829,22 @@ class Trade extends DataClass implements Insertable<Trade> {
   /// The raw execution number/ID precisely as it appeared on the statement.
   final String? rawTradeNo;
 
+  /// ISIN — permanent NSE/BSE instrument identifier.
+  /// e.g. INF204KB17I5 for GOLDBEES. Never changes unlike symbol.
+  final String? isin;
+
+  /// Settlement date — T+1 from the contract note.
+  /// Distinct from trade date. Useful for cash flow tracking.
+  final DateTime? settlementDate;
+
+  /// Trade execution time — HH:MM:SS from Annexure A.
+  /// e.g. "10:14:48". Stored as text to avoid timezone issues.
+  final String? tradeTime;
+
+  /// NSE Order Number from Annexure A (16 digits).
+  /// Different from Trade No. Stored for audit trail.
+  final String? orderNo;
+
   /// Parser confidence for auto-imported trades (0–100). 100 = manual entry.
   final int parseConfidence;
 
@@ -775,6 +881,10 @@ class Trade extends DataClass implements Insertable<Trade> {
     this.sourceReference,
     this.importId,
     this.rawTradeNo,
+    this.isin,
+    this.settlementDate,
+    this.tradeTime,
+    this.orderNo,
     required this.parseConfidence,
     required this.createdAt,
     required this.updatedAt,
@@ -840,6 +950,18 @@ class Trade extends DataClass implements Insertable<Trade> {
     if (!nullToAbsent || rawTradeNo != null) {
       map['raw_trade_no'] = Variable<String>(rawTradeNo);
     }
+    if (!nullToAbsent || isin != null) {
+      map['isin'] = Variable<String>(isin);
+    }
+    if (!nullToAbsent || settlementDate != null) {
+      map['settlement_date'] = Variable<DateTime>(settlementDate);
+    }
+    if (!nullToAbsent || tradeTime != null) {
+      map['trade_time'] = Variable<String>(tradeTime);
+    }
+    if (!nullToAbsent || orderNo != null) {
+      map['order_no'] = Variable<String>(orderNo);
+    }
     map['parse_confidence'] = Variable<int>(parseConfidence);
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
@@ -892,6 +1014,16 @@ class Trade extends DataClass implements Insertable<Trade> {
       rawTradeNo: rawTradeNo == null && nullToAbsent
           ? const Value.absent()
           : Value(rawTradeNo),
+      isin: isin == null && nullToAbsent ? const Value.absent() : Value(isin),
+      settlementDate: settlementDate == null && nullToAbsent
+          ? const Value.absent()
+          : Value(settlementDate),
+      tradeTime: tradeTime == null && nullToAbsent
+          ? const Value.absent()
+          : Value(tradeTime),
+      orderNo: orderNo == null && nullToAbsent
+          ? const Value.absent()
+          : Value(orderNo),
       parseConfidence: Value(parseConfidence),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
@@ -938,6 +1070,10 @@ class Trade extends DataClass implements Insertable<Trade> {
       sourceReference: serializer.fromJson<String?>(json['sourceReference']),
       importId: serializer.fromJson<String?>(json['importId']),
       rawTradeNo: serializer.fromJson<String?>(json['rawTradeNo']),
+      isin: serializer.fromJson<String?>(json['isin']),
+      settlementDate: serializer.fromJson<DateTime?>(json['settlementDate']),
+      tradeTime: serializer.fromJson<String?>(json['tradeTime']),
+      orderNo: serializer.fromJson<String?>(json['orderNo']),
       parseConfidence: serializer.fromJson<int>(json['parseConfidence']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
@@ -977,6 +1113,10 @@ class Trade extends DataClass implements Insertable<Trade> {
       'sourceReference': serializer.toJson<String?>(sourceReference),
       'importId': serializer.toJson<String?>(importId),
       'rawTradeNo': serializer.toJson<String?>(rawTradeNo),
+      'isin': serializer.toJson<String?>(isin),
+      'settlementDate': serializer.toJson<DateTime?>(settlementDate),
+      'tradeTime': serializer.toJson<String?>(tradeTime),
+      'orderNo': serializer.toJson<String?>(orderNo),
       'parseConfidence': serializer.toJson<int>(parseConfidence),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
@@ -1008,6 +1148,10 @@ class Trade extends DataClass implements Insertable<Trade> {
     Value<String?> sourceReference = const Value.absent(),
     Value<String?> importId = const Value.absent(),
     Value<String?> rawTradeNo = const Value.absent(),
+    Value<String?> isin = const Value.absent(),
+    Value<DateTime?> settlementDate = const Value.absent(),
+    Value<String?> tradeTime = const Value.absent(),
+    Value<String?> orderNo = const Value.absent(),
     int? parseConfidence,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -1042,6 +1186,12 @@ class Trade extends DataClass implements Insertable<Trade> {
         : this.sourceReference,
     importId: importId.present ? importId.value : this.importId,
     rawTradeNo: rawTradeNo.present ? rawTradeNo.value : this.rawTradeNo,
+    isin: isin.present ? isin.value : this.isin,
+    settlementDate: settlementDate.present
+        ? settlementDate.value
+        : this.settlementDate,
+    tradeTime: tradeTime.present ? tradeTime.value : this.tradeTime,
+    orderNo: orderNo.present ? orderNo.value : this.orderNo,
     parseConfidence: parseConfidence ?? this.parseConfidence,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
@@ -1092,6 +1242,12 @@ class Trade extends DataClass implements Insertable<Trade> {
       rawTradeNo: data.rawTradeNo.present
           ? data.rawTradeNo.value
           : this.rawTradeNo,
+      isin: data.isin.present ? data.isin.value : this.isin,
+      settlementDate: data.settlementDate.present
+          ? data.settlementDate.value
+          : this.settlementDate,
+      tradeTime: data.tradeTime.present ? data.tradeTime.value : this.tradeTime,
+      orderNo: data.orderNo.present ? data.orderNo.value : this.orderNo,
       parseConfidence: data.parseConfidence.present
           ? data.parseConfidence.value
           : this.parseConfidence,
@@ -1129,6 +1285,10 @@ class Trade extends DataClass implements Insertable<Trade> {
           ..write('sourceReference: $sourceReference, ')
           ..write('importId: $importId, ')
           ..write('rawTradeNo: $rawTradeNo, ')
+          ..write('isin: $isin, ')
+          ..write('settlementDate: $settlementDate, ')
+          ..write('tradeTime: $tradeTime, ')
+          ..write('orderNo: $orderNo, ')
           ..write('parseConfidence: $parseConfidence, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
@@ -1162,6 +1322,10 @@ class Trade extends DataClass implements Insertable<Trade> {
     sourceReference,
     importId,
     rawTradeNo,
+    isin,
+    settlementDate,
+    tradeTime,
+    orderNo,
     parseConfidence,
     createdAt,
     updatedAt,
@@ -1194,6 +1358,10 @@ class Trade extends DataClass implements Insertable<Trade> {
           other.sourceReference == this.sourceReference &&
           other.importId == this.importId &&
           other.rawTradeNo == this.rawTradeNo &&
+          other.isin == this.isin &&
+          other.settlementDate == this.settlementDate &&
+          other.tradeTime == this.tradeTime &&
+          other.orderNo == this.orderNo &&
           other.parseConfidence == this.parseConfidence &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt &&
@@ -1224,6 +1392,10 @@ class TradesCompanion extends UpdateCompanion<Trade> {
   final Value<String?> sourceReference;
   final Value<String?> importId;
   final Value<String?> rawTradeNo;
+  final Value<String?> isin;
+  final Value<DateTime?> settlementDate;
+  final Value<String?> tradeTime;
+  final Value<String?> orderNo;
   final Value<int> parseConfidence;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
@@ -1253,6 +1425,10 @@ class TradesCompanion extends UpdateCompanion<Trade> {
     this.sourceReference = const Value.absent(),
     this.importId = const Value.absent(),
     this.rawTradeNo = const Value.absent(),
+    this.isin = const Value.absent(),
+    this.settlementDate = const Value.absent(),
+    this.tradeTime = const Value.absent(),
+    this.orderNo = const Value.absent(),
     this.parseConfidence = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -1283,6 +1459,10 @@ class TradesCompanion extends UpdateCompanion<Trade> {
     this.sourceReference = const Value.absent(),
     this.importId = const Value.absent(),
     this.rawTradeNo = const Value.absent(),
+    this.isin = const Value.absent(),
+    this.settlementDate = const Value.absent(),
+    this.tradeTime = const Value.absent(),
+    this.orderNo = const Value.absent(),
     this.parseConfidence = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -1321,6 +1501,10 @@ class TradesCompanion extends UpdateCompanion<Trade> {
     Expression<String>? sourceReference,
     Expression<String>? importId,
     Expression<String>? rawTradeNo,
+    Expression<String>? isin,
+    Expression<DateTime>? settlementDate,
+    Expression<String>? tradeTime,
+    Expression<String>? orderNo,
     Expression<int>? parseConfidence,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
@@ -1352,6 +1536,10 @@ class TradesCompanion extends UpdateCompanion<Trade> {
       if (sourceReference != null) 'source_reference': sourceReference,
       if (importId != null) 'import_id': importId,
       if (rawTradeNo != null) 'raw_trade_no': rawTradeNo,
+      if (isin != null) 'isin': isin,
+      if (settlementDate != null) 'settlement_date': settlementDate,
+      if (tradeTime != null) 'trade_time': tradeTime,
+      if (orderNo != null) 'order_no': orderNo,
       if (parseConfidence != null) 'parse_confidence': parseConfidence,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
@@ -1384,6 +1572,10 @@ class TradesCompanion extends UpdateCompanion<Trade> {
     Value<String?>? sourceReference,
     Value<String?>? importId,
     Value<String?>? rawTradeNo,
+    Value<String?>? isin,
+    Value<DateTime?>? settlementDate,
+    Value<String?>? tradeTime,
+    Value<String?>? orderNo,
     Value<int>? parseConfidence,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
@@ -1414,6 +1606,10 @@ class TradesCompanion extends UpdateCompanion<Trade> {
       sourceReference: sourceReference ?? this.sourceReference,
       importId: importId ?? this.importId,
       rawTradeNo: rawTradeNo ?? this.rawTradeNo,
+      isin: isin ?? this.isin,
+      settlementDate: settlementDate ?? this.settlementDate,
+      tradeTime: tradeTime ?? this.tradeTime,
+      orderNo: orderNo ?? this.orderNo,
       parseConfidence: parseConfidence ?? this.parseConfidence,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -1502,6 +1698,18 @@ class TradesCompanion extends UpdateCompanion<Trade> {
     if (rawTradeNo.present) {
       map['raw_trade_no'] = Variable<String>(rawTradeNo.value);
     }
+    if (isin.present) {
+      map['isin'] = Variable<String>(isin.value);
+    }
+    if (settlementDate.present) {
+      map['settlement_date'] = Variable<DateTime>(settlementDate.value);
+    }
+    if (tradeTime.present) {
+      map['trade_time'] = Variable<String>(tradeTime.value);
+    }
+    if (orderNo.present) {
+      map['order_no'] = Variable<String>(orderNo.value);
+    }
     if (parseConfidence.present) {
       map['parse_confidence'] = Variable<int>(parseConfidence.value);
     }
@@ -1546,6 +1754,10 @@ class TradesCompanion extends UpdateCompanion<Trade> {
           ..write('sourceReference: $sourceReference, ')
           ..write('importId: $importId, ')
           ..write('rawTradeNo: $rawTradeNo, ')
+          ..write('isin: $isin, ')
+          ..write('settlementDate: $settlementDate, ')
+          ..write('tradeTime: $tradeTime, ')
+          ..write('orderNo: $orderNo, ')
           ..write('parseConfidence: $parseConfidence, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
@@ -2188,6 +2400,18 @@ class $HoldingsTable extends Holdings with TableInfo<$HoldingsTable, Holding> {
     type: DriftSqlType.double,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _realizedPnLMeta = const VerificationMeta(
+    'realizedPnL',
+  );
+  @override
+  late final GeneratedColumn<double> realizedPnL = GeneratedColumn<double>(
+    'realized_pnl',
+    aliasedName,
+    false,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0.0),
+  );
   static const VerificationMeta _lastUpdatedMeta = const VerificationMeta(
     'lastUpdated',
   );
@@ -2207,6 +2431,7 @@ class $HoldingsTable extends Holdings with TableInfo<$HoldingsTable, Holding> {
     totalQuantity,
     averagePrice,
     investedValue,
+    realizedPnL,
     lastUpdated,
   ];
   @override
@@ -2276,6 +2501,15 @@ class $HoldingsTable extends Holdings with TableInfo<$HoldingsTable, Holding> {
     } else if (isInserting) {
       context.missing(_investedValueMeta);
     }
+    if (data.containsKey('realized_pnl')) {
+      context.handle(
+        _realizedPnLMeta,
+        realizedPnL.isAcceptableOrUnknown(
+          data['realized_pnl']!,
+          _realizedPnLMeta,
+        ),
+      );
+    }
     if (data.containsKey('last_updated')) {
       context.handle(
         _lastUpdatedMeta,
@@ -2314,6 +2548,10 @@ class $HoldingsTable extends Holdings with TableInfo<$HoldingsTable, Holding> {
         DriftSqlType.double,
         data['${effectivePrefix}invested_value'],
       )!,
+      realizedPnL: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}realized_pnl'],
+      )!,
       lastUpdated: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}last_updated'],
@@ -2343,6 +2581,9 @@ class Holding extends DataClass implements Insertable<Holding> {
   /// Total capital deployed (averagePrice × totalQuantity).
   final double investedValue;
 
+  /// Realized Profit & Loss calculated.
+  final double realizedPnL;
+
   /// UTC timestamp of the last cache rebuild.
   final DateTime lastUpdated;
   const Holding({
@@ -2351,6 +2592,7 @@ class Holding extends DataClass implements Insertable<Holding> {
     required this.totalQuantity,
     required this.averagePrice,
     required this.investedValue,
+    required this.realizedPnL,
     required this.lastUpdated,
   });
   @override
@@ -2361,6 +2603,7 @@ class Holding extends DataClass implements Insertable<Holding> {
     map['total_quantity'] = Variable<double>(totalQuantity);
     map['average_price'] = Variable<double>(averagePrice);
     map['invested_value'] = Variable<double>(investedValue);
+    map['realized_pnl'] = Variable<double>(realizedPnL);
     map['last_updated'] = Variable<DateTime>(lastUpdated);
     return map;
   }
@@ -2372,6 +2615,7 @@ class Holding extends DataClass implements Insertable<Holding> {
       totalQuantity: Value(totalQuantity),
       averagePrice: Value(averagePrice),
       investedValue: Value(investedValue),
+      realizedPnL: Value(realizedPnL),
       lastUpdated: Value(lastUpdated),
     );
   }
@@ -2387,6 +2631,7 @@ class Holding extends DataClass implements Insertable<Holding> {
       totalQuantity: serializer.fromJson<double>(json['totalQuantity']),
       averagePrice: serializer.fromJson<double>(json['averagePrice']),
       investedValue: serializer.fromJson<double>(json['investedValue']),
+      realizedPnL: serializer.fromJson<double>(json['realizedPnL']),
       lastUpdated: serializer.fromJson<DateTime>(json['lastUpdated']),
     );
   }
@@ -2399,6 +2644,7 @@ class Holding extends DataClass implements Insertable<Holding> {
       'totalQuantity': serializer.toJson<double>(totalQuantity),
       'averagePrice': serializer.toJson<double>(averagePrice),
       'investedValue': serializer.toJson<double>(investedValue),
+      'realizedPnL': serializer.toJson<double>(realizedPnL),
       'lastUpdated': serializer.toJson<DateTime>(lastUpdated),
     };
   }
@@ -2409,6 +2655,7 @@ class Holding extends DataClass implements Insertable<Holding> {
     double? totalQuantity,
     double? averagePrice,
     double? investedValue,
+    double? realizedPnL,
     DateTime? lastUpdated,
   }) => Holding(
     instrumentSymbol: instrumentSymbol ?? this.instrumentSymbol,
@@ -2416,6 +2663,7 @@ class Holding extends DataClass implements Insertable<Holding> {
     totalQuantity: totalQuantity ?? this.totalQuantity,
     averagePrice: averagePrice ?? this.averagePrice,
     investedValue: investedValue ?? this.investedValue,
+    realizedPnL: realizedPnL ?? this.realizedPnL,
     lastUpdated: lastUpdated ?? this.lastUpdated,
   );
   Holding copyWithCompanion(HoldingsCompanion data) {
@@ -2435,6 +2683,9 @@ class Holding extends DataClass implements Insertable<Holding> {
       investedValue: data.investedValue.present
           ? data.investedValue.value
           : this.investedValue,
+      realizedPnL: data.realizedPnL.present
+          ? data.realizedPnL.value
+          : this.realizedPnL,
       lastUpdated: data.lastUpdated.present
           ? data.lastUpdated.value
           : this.lastUpdated,
@@ -2449,6 +2700,7 @@ class Holding extends DataClass implements Insertable<Holding> {
           ..write('totalQuantity: $totalQuantity, ')
           ..write('averagePrice: $averagePrice, ')
           ..write('investedValue: $investedValue, ')
+          ..write('realizedPnL: $realizedPnL, ')
           ..write('lastUpdated: $lastUpdated')
           ..write(')'))
         .toString();
@@ -2461,6 +2713,7 @@ class Holding extends DataClass implements Insertable<Holding> {
     totalQuantity,
     averagePrice,
     investedValue,
+    realizedPnL,
     lastUpdated,
   );
   @override
@@ -2472,6 +2725,7 @@ class Holding extends DataClass implements Insertable<Holding> {
           other.totalQuantity == this.totalQuantity &&
           other.averagePrice == this.averagePrice &&
           other.investedValue == this.investedValue &&
+          other.realizedPnL == this.realizedPnL &&
           other.lastUpdated == this.lastUpdated);
 }
 
@@ -2481,6 +2735,7 @@ class HoldingsCompanion extends UpdateCompanion<Holding> {
   final Value<double> totalQuantity;
   final Value<double> averagePrice;
   final Value<double> investedValue;
+  final Value<double> realizedPnL;
   final Value<DateTime> lastUpdated;
   final Value<int> rowid;
   const HoldingsCompanion({
@@ -2489,6 +2744,7 @@ class HoldingsCompanion extends UpdateCompanion<Holding> {
     this.totalQuantity = const Value.absent(),
     this.averagePrice = const Value.absent(),
     this.investedValue = const Value.absent(),
+    this.realizedPnL = const Value.absent(),
     this.lastUpdated = const Value.absent(),
     this.rowid = const Value.absent(),
   });
@@ -2498,6 +2754,7 @@ class HoldingsCompanion extends UpdateCompanion<Holding> {
     required double totalQuantity,
     required double averagePrice,
     required double investedValue,
+    this.realizedPnL = const Value.absent(),
     this.lastUpdated = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : instrumentSymbol = Value(instrumentSymbol),
@@ -2511,6 +2768,7 @@ class HoldingsCompanion extends UpdateCompanion<Holding> {
     Expression<double>? totalQuantity,
     Expression<double>? averagePrice,
     Expression<double>? investedValue,
+    Expression<double>? realizedPnL,
     Expression<DateTime>? lastUpdated,
     Expression<int>? rowid,
   }) {
@@ -2520,6 +2778,7 @@ class HoldingsCompanion extends UpdateCompanion<Holding> {
       if (totalQuantity != null) 'total_quantity': totalQuantity,
       if (averagePrice != null) 'average_price': averagePrice,
       if (investedValue != null) 'invested_value': investedValue,
+      if (realizedPnL != null) 'realized_pnl': realizedPnL,
       if (lastUpdated != null) 'last_updated': lastUpdated,
       if (rowid != null) 'rowid': rowid,
     });
@@ -2531,6 +2790,7 @@ class HoldingsCompanion extends UpdateCompanion<Holding> {
     Value<double>? totalQuantity,
     Value<double>? averagePrice,
     Value<double>? investedValue,
+    Value<double>? realizedPnL,
     Value<DateTime>? lastUpdated,
     Value<int>? rowid,
   }) {
@@ -2540,6 +2800,7 @@ class HoldingsCompanion extends UpdateCompanion<Holding> {
       totalQuantity: totalQuantity ?? this.totalQuantity,
       averagePrice: averagePrice ?? this.averagePrice,
       investedValue: investedValue ?? this.investedValue,
+      realizedPnL: realizedPnL ?? this.realizedPnL,
       lastUpdated: lastUpdated ?? this.lastUpdated,
       rowid: rowid ?? this.rowid,
     );
@@ -2563,6 +2824,9 @@ class HoldingsCompanion extends UpdateCompanion<Holding> {
     if (investedValue.present) {
       map['invested_value'] = Variable<double>(investedValue.value);
     }
+    if (realizedPnL.present) {
+      map['realized_pnl'] = Variable<double>(realizedPnL.value);
+    }
     if (lastUpdated.present) {
       map['last_updated'] = Variable<DateTime>(lastUpdated.value);
     }
@@ -2580,6 +2844,7 @@ class HoldingsCompanion extends UpdateCompanion<Holding> {
           ..write('totalQuantity: $totalQuantity, ')
           ..write('averagePrice: $averagePrice, ')
           ..write('investedValue: $investedValue, ')
+          ..write('realizedPnL: $realizedPnL, ')
           ..write('lastUpdated: $lastUpdated, ')
           ..write('rowid: $rowid')
           ..write(')'))
@@ -7930,6 +8195,10 @@ typedef $$TradesTableCreateCompanionBuilder =
       Value<String?> sourceReference,
       Value<String?> importId,
       Value<String?> rawTradeNo,
+      Value<String?> isin,
+      Value<DateTime?> settlementDate,
+      Value<String?> tradeTime,
+      Value<String?> orderNo,
       Value<int> parseConfidence,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
@@ -7961,6 +8230,10 @@ typedef $$TradesTableUpdateCompanionBuilder =
       Value<String?> sourceReference,
       Value<String?> importId,
       Value<String?> rawTradeNo,
+      Value<String?> isin,
+      Value<DateTime?> settlementDate,
+      Value<String?> tradeTime,
+      Value<String?> orderNo,
       Value<int> parseConfidence,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
@@ -8092,6 +8365,26 @@ class $$TradesTableFilterComposer
 
   ColumnFilters<String> get rawTradeNo => $composableBuilder(
     column: $table.rawTradeNo,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get isin => $composableBuilder(
+    column: $table.isin,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get settlementDate => $composableBuilder(
+    column: $table.settlementDate,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get tradeTime => $composableBuilder(
+    column: $table.tradeTime,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get orderNo => $composableBuilder(
+    column: $table.orderNo,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -8240,6 +8533,26 @@ class $$TradesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get isin => $composableBuilder(
+    column: $table.isin,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get settlementDate => $composableBuilder(
+    column: $table.settlementDate,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get tradeTime => $composableBuilder(
+    column: $table.tradeTime,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get orderNo => $composableBuilder(
+    column: $table.orderNo,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get parseConfidence => $composableBuilder(
     column: $table.parseConfidence,
     builder: (column) => ColumnOrderings(column),
@@ -8359,6 +8672,20 @@ class $$TradesTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get isin =>
+      $composableBuilder(column: $table.isin, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get settlementDate => $composableBuilder(
+    column: $table.settlementDate,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get tradeTime =>
+      $composableBuilder(column: $table.tradeTime, builder: (column) => column);
+
+  GeneratedColumn<String> get orderNo =>
+      $composableBuilder(column: $table.orderNo, builder: (column) => column);
+
   GeneratedColumn<int> get parseConfidence => $composableBuilder(
     column: $table.parseConfidence,
     builder: (column) => column,
@@ -8427,6 +8754,10 @@ class $$TradesTableTableManager
                 Value<String?> sourceReference = const Value.absent(),
                 Value<String?> importId = const Value.absent(),
                 Value<String?> rawTradeNo = const Value.absent(),
+                Value<String?> isin = const Value.absent(),
+                Value<DateTime?> settlementDate = const Value.absent(),
+                Value<String?> tradeTime = const Value.absent(),
+                Value<String?> orderNo = const Value.absent(),
                 Value<int> parseConfidence = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
@@ -8456,6 +8787,10 @@ class $$TradesTableTableManager
                 sourceReference: sourceReference,
                 importId: importId,
                 rawTradeNo: rawTradeNo,
+                isin: isin,
+                settlementDate: settlementDate,
+                tradeTime: tradeTime,
+                orderNo: orderNo,
                 parseConfidence: parseConfidence,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
@@ -8487,6 +8822,10 @@ class $$TradesTableTableManager
                 Value<String?> sourceReference = const Value.absent(),
                 Value<String?> importId = const Value.absent(),
                 Value<String?> rawTradeNo = const Value.absent(),
+                Value<String?> isin = const Value.absent(),
+                Value<DateTime?> settlementDate = const Value.absent(),
+                Value<String?> tradeTime = const Value.absent(),
+                Value<String?> orderNo = const Value.absent(),
                 Value<int> parseConfidence = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
@@ -8516,6 +8855,10 @@ class $$TradesTableTableManager
                 sourceReference: sourceReference,
                 importId: importId,
                 rawTradeNo: rawTradeNo,
+                isin: isin,
+                settlementDate: settlementDate,
+                tradeTime: tradeTime,
+                orderNo: orderNo,
                 parseConfidence: parseConfidence,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
@@ -8816,6 +9159,7 @@ typedef $$HoldingsTableCreateCompanionBuilder =
       required double totalQuantity,
       required double averagePrice,
       required double investedValue,
+      Value<double> realizedPnL,
       Value<DateTime> lastUpdated,
       Value<int> rowid,
     });
@@ -8826,6 +9170,7 @@ typedef $$HoldingsTableUpdateCompanionBuilder =
       Value<double> totalQuantity,
       Value<double> averagePrice,
       Value<double> investedValue,
+      Value<double> realizedPnL,
       Value<DateTime> lastUpdated,
       Value<int> rowid,
     });
@@ -8861,6 +9206,11 @@ class $$HoldingsTableFilterComposer
 
   ColumnFilters<double> get investedValue => $composableBuilder(
     column: $table.investedValue,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get realizedPnL => $composableBuilder(
+    column: $table.realizedPnL,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -8904,6 +9254,11 @@ class $$HoldingsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<double> get realizedPnL => $composableBuilder(
+    column: $table.realizedPnL,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get lastUpdated => $composableBuilder(
     column: $table.lastUpdated,
     builder: (column) => ColumnOrderings(column),
@@ -8941,6 +9296,11 @@ class $$HoldingsTableAnnotationComposer
 
   GeneratedColumn<double> get investedValue => $composableBuilder(
     column: $table.investedValue,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get realizedPnL => $composableBuilder(
+    column: $table.realizedPnL,
     builder: (column) => column,
   );
 
@@ -8983,6 +9343,7 @@ class $$HoldingsTableTableManager
                 Value<double> totalQuantity = const Value.absent(),
                 Value<double> averagePrice = const Value.absent(),
                 Value<double> investedValue = const Value.absent(),
+                Value<double> realizedPnL = const Value.absent(),
                 Value<DateTime> lastUpdated = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => HoldingsCompanion(
@@ -8991,6 +9352,7 @@ class $$HoldingsTableTableManager
                 totalQuantity: totalQuantity,
                 averagePrice: averagePrice,
                 investedValue: investedValue,
+                realizedPnL: realizedPnL,
                 lastUpdated: lastUpdated,
                 rowid: rowid,
               ),
@@ -9001,6 +9363,7 @@ class $$HoldingsTableTableManager
                 required double totalQuantity,
                 required double averagePrice,
                 required double investedValue,
+                Value<double> realizedPnL = const Value.absent(),
                 Value<DateTime> lastUpdated = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => HoldingsCompanion.insert(
@@ -9009,6 +9372,7 @@ class $$HoldingsTableTableManager
                 totalQuantity: totalQuantity,
                 averagePrice: averagePrice,
                 investedValue: investedValue,
+                realizedPnL: realizedPnL,
                 lastUpdated: lastUpdated,
                 rowid: rowid,
               ),

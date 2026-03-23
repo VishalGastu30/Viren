@@ -1,7 +1,9 @@
+import 'isin_resolver.dart';
 import 'dart:async';
 import 'dart:developer' as developer;
 
 import '../../database/daos/import_dao.dart';
+import '../../database/enums.dart';
 import '../../database/repositories/trade_repository.dart';
 import '../../auth/auth_service.dart';
 import '../../database/app_database.dart';
@@ -449,7 +451,7 @@ class ScanOrchestrator {
       final Map<PdfDocumentType, DocumentContentParser> parsers = {
         PdfDocumentType.nseTradeConfirmation: NseTradeConfirmationParser(),
         PdfDocumentType.nseAlertsStatement: NseAlertsParser(),
-        PdfDocumentType.sbiContractNote: SbiContractNoteParser(),
+        PdfDocumentType.sbiContractNote: SbiContractNoteParser(IsinResolver()),
         PdfDocumentType.sbiMarginStatement: SbiMarginStatementParser(),
         PdfDocumentType.sbiFundsStatement: SbiFundsStatementParser(),
         PdfDocumentType.sbiSecuritiesStatement: SbiSecuritiesStatementParser(),
@@ -577,7 +579,7 @@ class ScanOrchestrator {
 
           final parser = parsers[payload.docType];
           if (parser != null) {
-            final parseRes = parser.parseRawText(
+            final parseRes = await parser.parseRawText(
               rawText: payload.extractedText!,
               filename: payload.attachment.filename,
               attachmentHash: payload.attachmentHash!,
@@ -703,33 +705,173 @@ class ScanOrchestrator {
       }).toList();
 
       // ═══════════════════════════════════════════════════════════════
+      // STAGE 10: CNB + NSE DIRECT HARMONY (Runs prior to Ledger)
+      // ═══════════════════════════════════════════════════════════════
+      _emit(ScanStage.snapshotReconciliation, StageStatus.running,
+          actionText: 'Harmonising CNB and NSE Direct trades…');
+      
+      final allSnapshots = <EmailParsedSnapshot>[];
+      for (final res in parserResults) {
+        allSnapshots.addAll(res.snapshots);
+      }
+      _counters = _counters.copyWith(snapshotsParsed: allSnapshots.length);
+
+      final List<EmailParsedTrade> allCnbTrades = [];
+      final List<EmailParsedTrade> allNseDirectTrades = [];
+
+      for (final payload in classifiedPayloads) {
+        final trades = payload.regexTrades.isNotEmpty
+            ? payload.regexTrades
+            : payload.aiTrades;
+        for (final t in trades) {
+          if (t.source == TradeSource.sbiContractNote) {
+            allCnbTrades.add(t);
+          } else if (t.source == TradeSource.nseDirect) {
+            allNseDirectTrades.add(t);
+          }
+        }
+      }
+
+      developer.log(
+        '[HARMONY] CNB trades: ${allCnbTrades.length}, '
+        'NSE Direct trades: ${allNseDirectTrades.length}',
+        name: 'ScanOrchestrator',
+      );
+
+      final unmatchedNse = List<EmailParsedTrade>.from(allNseDirectTrades);
+      final harmonisedTrades = <EmailParsedTrade>[];
+
+      for (final cnb in allCnbTrades) {
+        EmailParsedTrade? match;
+        int matchIdx = -1;
+
+        for (int i = 0; i < unmatchedNse.length; i++) {
+          final nse = unmatchedNse[i];
+          final qtyMatch = (cnb.quantity - nse.quantity).abs() < 0.01;
+          final priceDeviation = cnb.pricePerUnit > 0
+              ? (cnb.pricePerUnit - nse.pricePerUnit).abs() / cnb.pricePerUnit
+              : (cnb.pricePerUnit - nse.pricePerUnit).abs();
+          final priceMatch = priceDeviation < 0.001; // 0.1% tolerance
+          final dateDiff = cnb.tradeDate.difference(nse.tradeDate).inDays.abs();
+          final dateMatch = dateDiff <= 1;
+
+          if (qtyMatch && priceMatch && dateMatch) {
+            match = nse;
+            matchIdx = i;
+            break;
+          }
+        }
+
+        if (match != null) {
+          unmatchedNse.removeAt(matchIdx);
+          harmonisedTrades.add(cnb.copyWith(
+            symbol: match.symbol,
+            confidence: 99,
+            source: TradeSource.both,
+             tradeNo: cnb.tradeNo ?? match.tradeNo,
+            warnings: [
+              ...cnb.warnings,
+              'Symbol verified via NSE Direct: ${match.symbol}',
+              if (cnb.symbol != match.symbol)
+                'CNB had symbol "${cnb.symbol}" → corrected to "${match.symbol}"',
+            ],
+          ));
+
+          developer.log(
+            '[HARMONY_MATCH] ${match.symbol} | qty=${cnb.quantity} '
+            'price=${cnb.pricePerUnit} | date=${cnb.tradeDate} | '
+            'CNB symbol was "${cnb.symbol}" → NSE "${match.symbol}"',
+            name: 'ScanOrchestrator',
+          );
+        } else {
+          harmonisedTrades.add(cnb);
+          developer.log(
+            '[HARMONY_CNB_ONLY] ${cnb.symbol} | qty=${cnb.quantity} '
+            'price=${cnb.pricePerUnit} | No NSE Direct match found',
+            name: 'ScanOrchestrator',
+          );
+        }
+      }
+
+      for (final nse in unmatchedNse) {
+        harmonisedTrades.add(nse.copyWith(
+          confidence: 75,
+          warnings: [
+            ...nse.warnings,
+            '⚠ No matching CNB found — brokerage charges unavailable. '
+            'Imported from NSE Direct confirmation only.',
+          ],
+        ));
+        developer.log(
+          '[HARMONY_NSE_ONLY] ${nse.symbol} | qty=${nse.quantity} '
+          'price=${nse.pricePerUnit} | No CNB match — using NSE Direct as fallback',
+          name: 'ScanOrchestrator',
+        );
+      }
+
+      developer.log(
+        '[HARMONY] Result: ${harmonisedTrades.length} total trades '
+        '(${allCnbTrades.length} CNB + ${unmatchedNse.length} NSE-only)',
+        name: 'ScanOrchestrator',
+      );
+
+      final harmonisedResult = EmailParseResult(
+        messageId: 'HARMONISED',
+        trades: harmonisedTrades,
+        snapshots: allSnapshots,
+        aggregateConfidence: harmonisedTrades.isEmpty
+            ? 0
+            : harmonisedTrades.map((t) => t.confidence).reduce((a, b) => a + b) ~/ harmonisedTrades.length,
+        warnings: [],
+        errors: [],
+        rowsDetected: 0,
+        rowsParsed: harmonisedTrades.length,
+        rejectedRows: 0,
+      );
+
+      final harmonisedParserResults = [
+        harmonisedResult,
+        ...parserResults.map((r) => EmailParseResult(
+              messageId: r.messageId,
+              trades: [],
+              snapshots: [],
+              aggregateConfidence: r.aggregateConfidence,
+              warnings: r.warnings,
+              errors: r.errors,
+              rowsDetected: r.rowsDetected,
+              rowsParsed: r.rowsParsed,
+              rejectedRows: r.rejectedRows,
+            )),
+      ];
+
+      // ═══════════════════════════════════════════════════════════════
       // STAGE 9: LEDGER ENGINE
       // ═══════════════════════════════════════════════════════════════
       _emit(ScanStage.ledgerInsert, StageStatus.running,
           actionText: 'Validating trades with the LedgerEngine…');
 
       final ledger = LedgerEngine();
-      final ledgerResult = ledger.reconstruct(parserResults);
+      final ledgerResult = ledger.reconstruct(harmonisedParserResults);
 
       final totalTrades = ledgerResult.validatedTrades.length;
-      int totalConf = 0, confCount = 0, totalUnknown = 0, totalSnapshots = 0;
-      for (final res in parserResults) {
+      int totalConf = 0, confCount = 0, totalUnknown = 0, totalSnapshotsCount = 0;
+      for (final res in harmonisedParserResults) {
         if (res.trades.isNotEmpty || res.snapshots.isNotEmpty) {
           totalConf += res.aggregateConfidence;
           confCount++;
         }
         if (res.warnings.any((w) => w.contains('Unknown document format'))) totalUnknown++;
-        totalSnapshots += res.snapshots.length;
+        totalSnapshotsCount += res.snapshots.length;
       }
       final avgConfidence = confCount == 0 ? 0 : (totalConf / confCount).round();
 
       final preview = EmailImportPreview(
         totalBrokerEmailsFound: emails.length,
         totalPdfAttachments: totalPdfs,
-        results: parserResults,
+        results: harmonisedParserResults,
         totalTradesFound: totalTrades,
         aggregateConfidence: avgConfidence,
-        totalSnapshotsFound: totalSnapshots,
+        totalSnapshotsFound: totalSnapshotsCount,
         pdfDecryptionFailures: decryptFailures,
         totalUnknownDocuments: totalUnknown,
         decryptionErrors: decryptErrors,
@@ -739,34 +881,12 @@ class ScanOrchestrator {
 
       _emit(ScanStage.ledgerInsert, StageStatus.completed, progress: 1.0);
 
-      // ═══════════════════════════════════════════════════════════════
-      // STAGE 10: 3-SOURCE CROSS-REFERENCING & RECONCILIATION
-      // ═══════════════════════════════════════════════════════════════
-      _emit(ScanStage.snapshotReconciliation, StageStatus.running,
-          actionText: 'Cross-referencing trades across 3 sources…');
-      _counters = _counters.copyWith(snapshotsParsed: totalSnapshots);
-
-      // CNB-only architecture: no cross-referencing needed.
-      // SBI Contract Note is the single authoritative source.
-      // Deduplication is handled by Trade No (rawTradeNo field) in insertTrade.
-      developer.log(
-        '[CROSS_REF] CNB-only mode: skipping NSE Direct cross-reference.',
-        name: 'ScanOrchestrator',
-      );
-
       // --- PHASE B: Snapshot ↔ Ledger Reconciliation ---
-      // Compare NSE Alerts snapshots against the reconstructed ledger holdings
-      final allSnapshots = <EmailParsedSnapshot>[];
-      for (final res in parserResults) {
-        allSnapshots.addAll(res.snapshots);
-      }
-
       int reconciledCount = 0;
       int discrepantCount = 0;
       final reconciliationNotes = <String>[];
 
       if (allSnapshots.isNotEmpty && ledgerResult.holdings.isNotEmpty) {
-        // Group snapshots by symbol, keep the latest
         final latestSnapshots = <String, EmailParsedSnapshot>{};
         for (final snap in allSnapshots) {
           final existing = latestSnapshots[snap.symbol];
@@ -779,7 +899,6 @@ class ScanOrchestrator {
           final snapSymbol = entry.key;
           final snapQty = entry.value.quantity;
 
-          // Try to find a matching holding (fuzzy name matching since NSE Alerts uses long names)
           ReconstructedHolding? matchingHolding;
           for (final hEntry in ledgerResult.holdings.entries) {
             if (hEntry.key.toUpperCase() == snapSymbol.toUpperCase() ||
@@ -792,18 +911,15 @@ class ScanOrchestrator {
 
           if (matchingHolding != null) {
             if ((matchingHolding.netQuantity - snapQty).abs() < 0.01) {
-              reconciledCount++;
-              reconciliationNotes.add('${matchingHolding.symbol}: Qty ${snapQty.toStringAsFixed(0)} — Reconciled');
+               reconciledCount++;
+               reconciliationNotes.add('${matchingHolding.symbol}: Qty ${snapQty.toStringAsFixed(0)} — Reconciled');
             } else {
-              discrepantCount++;
-              reconciliationNotes.add(
-                '${matchingHolding.symbol}: Ledger=${matchingHolding.netQuantity.toStringAsFixed(0)}, '
-                'Snapshot=${snapQty.toStringAsFixed(0)} — DISCREPANT',
-              );
+               discrepantCount++;
+               reconciliationNotes.add('${matchingHolding.symbol}: Ledger=${matchingHolding.netQuantity.toStringAsFixed(0)}, Snapshot=${snapQty.toStringAsFixed(0)} — DISCREPANT');
             }
           } else {
-            discrepantCount++;
-            reconciliationNotes.add('$snapSymbol: Not found in ledger but snapshot reports ${snapQty.toStringAsFixed(0)} — MISSING');
+             discrepantCount++;
+             reconciliationNotes.add('$snapSymbol: Not found in ledger but snapshot reports ${snapQty.toStringAsFixed(0)} — MISSING');
           }
         }
       }
@@ -842,12 +958,12 @@ class ScanOrchestrator {
       String summaryMessage;
       if (totalTrades > 0) {
         summaryMessage = '${importResult?.successfulTrades ?? 0} trades imported. '
-            '$totalSnapshots snapshots recorded for reconciliation.';
+            '$totalSnapshotsCount snapshots recorded for reconciliation.';
         if (totalUnresolved > 0) {
           summaryMessage += ' ⚠️ $totalUnresolved trade(s) need manual review.';
         }
-      } else if (totalSnapshots > 0) {
-        summaryMessage = 'No executed trades found — $totalSnapshots snapshots recorded for reconciliation.';
+      } else if (totalSnapshotsCount > 0) {
+        summaryMessage = 'No executed trades found — $totalSnapshotsCount snapshots recorded for reconciliation.';
         if (totalUnresolved > 0) {
           summaryMessage += ' ⚠️ $totalUnresolved trade(s) need manual review.';
         }

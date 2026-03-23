@@ -222,10 +222,7 @@ final aiGuardrailsProvider = Provider<AiGuardrails>((ref) {
 /// of the full allTradesProvider stream.
 /// This prevents expensive snapshot recomputation on every DB event.
 final tradesCountProvider = StreamProvider<int>((ref) {
-  final db = ref.watch(appDatabaseProvider);
-  return db.select(db.trades)
-      .watch()
-      .map((trades) => trades.length);
+  return ref.watch(tradesDaoProvider).watchTradeCount();
 });
 
 final portfolioSnapshotAnalyticsProvider =

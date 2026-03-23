@@ -9,7 +9,7 @@ abstract class DocumentContentParser {
   PdfDocumentType get supportedType;
 
   /// Parse the raw decrypted text into a structured EmailParseResult.
-  EmailParseResult parseRawText({
+  Future<EmailParseResult> parseRawText({
     required String rawText,
     required String filename,
     required String attachmentHash,

@@ -49,6 +49,11 @@ class TradesDao extends DatabaseAccessor<AppDatabase> with _$TradesDaoMixin {
     return row.read(countExpr) ?? 0;
   }
 
+  /// Stream of the total trade count. Used to trigger lightweight analytics recomputation.
+  Stream<int> watchTradeCount() {
+    return (select(trades)..orderBy([])).watch().map((rows) => rows.length);
+  }
+
   // ── Trade Reasons ────────────────────────────────────────────────────────────
 
   /// Insert or replace the reason for a trade.

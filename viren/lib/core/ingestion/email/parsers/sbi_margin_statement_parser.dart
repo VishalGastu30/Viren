@@ -7,12 +7,12 @@ class SbiMarginStatementParser implements DocumentContentParser {
   PdfDocumentType get supportedType => PdfDocumentType.sbiMarginStatement;
 
   @override
-  EmailParseResult parseRawText({
+  Future<EmailParseResult> parseRawText({
     required String rawText,
     required String filename,
     required String attachmentHash,
     required DateTime emailDate,
-  }) {
+  }) async {
     final snapshots = <EmailParsedSnapshot>[];
     final warnings = <String>[];
     

@@ -79,7 +79,7 @@ class ScannerController {
       }
       // If since is null, this is an unbounded full historical scan.
 
-      final q = 'from:digidocemail@sbicapsec.com filename:CNB$dateFilter';
+      final q = 'from:digidocemail@sbicapsec.com filename:CNB$dateFilter OR from:nse-direct@nse.co.in has:attachment';
 
       // Collect all message IDs (with pagination)
       final allMessageIds = <String>[];

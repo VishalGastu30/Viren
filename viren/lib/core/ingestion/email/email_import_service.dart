@@ -18,6 +18,7 @@ import 'parsers/sbi_contract_note_parser.dart';
 import 'parsers/sbi_margin_statement_parser.dart';
 import 'parsers/sbi_funds_statement_parser.dart';
 import 'parsers/sbi_securities_statement_parser.dart';
+import 'isin_resolver.dart';
 import 'parsers/nse_alerts_parser_v2.dart';
 import '../tallying/ledger_engine.dart';
 
@@ -190,7 +191,7 @@ class EmailImportService {
     final Map<PdfDocumentType, DocumentContentParser> parsers = {
       PdfDocumentType.nseTradeConfirmation: NseTradeConfirmationParser(),
       PdfDocumentType.nseAlertsStatement: NseAlertsParser(),
-      PdfDocumentType.sbiContractNote: SbiContractNoteParser(),
+      PdfDocumentType.sbiContractNote: SbiContractNoteParser(IsinResolver()),
       PdfDocumentType.sbiMarginStatement: SbiMarginStatementParser(),
       PdfDocumentType.sbiFundsStatement: SbiFundsStatementParser(),
       PdfDocumentType.sbiSecuritiesStatement: SbiSecuritiesStatementParser(),
@@ -246,7 +247,7 @@ class EmailImportService {
           // LAYER 4: Specialized Parsing
           final parser = parsers[docType];
           if (parser != null) {
-              final parseRes = parser.parseRawText(
+              final parseRes = await parser.parseRawText(
                 rawText: result.extractedText,
                 filename: attachment.filename,
                 attachmentHash: result.attachmentHash,

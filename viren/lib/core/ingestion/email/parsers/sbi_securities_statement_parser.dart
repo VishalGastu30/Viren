@@ -7,12 +7,12 @@ class SbiSecuritiesStatementParser implements DocumentContentParser {
   PdfDocumentType get supportedType => PdfDocumentType.sbiSecuritiesStatement;
 
   @override
-  EmailParseResult parseRawText({
+  Future<EmailParseResult> parseRawText({
     required String rawText,
     required String filename,
     required String attachmentHash,
     required DateTime emailDate,
-  }) {
+  }) async {
     // Securities (Holdings) statements will be fully implemented 
     // for advanced Snapshot integration later.
     // For now, they pass safely through the pipeline.

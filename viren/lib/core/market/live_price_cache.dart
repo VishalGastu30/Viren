@@ -70,8 +70,6 @@ class LivePriceCacheNotifier extends Notifier<LivePriceState> {
   // These are niche ETFs not listed on Yahoo Finance India feed
   // They will never be tried regardless of session or restart.
   static const _permanentlySkipped = {
-    'ICICISILVE',     // ICICI Prudential Silver ETF
-    'ICICISILVER',    // alternate spelling
     'SILVERBEES',     // Nippon Silver ETF
     'SILVRETF',       // HDFC Silver ETF
     'BANKLIMITED',    // corrupted symbol (safety net)
@@ -79,11 +77,14 @@ class LivePriceCacheNotifier extends Notifier<LivePriceState> {
 
   @override
   LivePriceState build() {
-    _loadFailedSymbols();
     return const LivePriceState();
   }
 
-  Future<void> _loadFailedSymbols() async {
+  bool _blacklistLoaded = false;
+
+  Future<void> _ensureBlacklistLoaded() async {
+    if (_blacklistLoaded) return;
+    _blacklistLoaded = true;
     try {
       final prefs = await SharedPreferences.getInstance();
       final stored = prefs.getStringList(_prefKeyFailedSymbols) ?? [];
@@ -164,6 +165,7 @@ class LivePriceCacheNotifier extends Notifier<LivePriceState> {
     // Fetch sequentially to avoid burst of concurrent network calls.
     // Circuit breaker: skip symbols that have failed repeatedly.
     for (final sym in _symbols) {
+      // Skip permanently — these symbols never have Yahoo Finance data
       if (_permanentlySkipped.contains(sym)) {
         // For silver ETFs, approximate from silver spot price
         // They track silver within 0.5% — good enough for display
@@ -174,6 +176,11 @@ class LivePriceCacheNotifier extends Notifier<LivePriceState> {
         }
         continue;
       }
+      
+      // Load persisted blacklist on first fetch of this session
+      await _ensureBlacklistLoaded();
+
+      // Skip session-blacklisted symbols
       if (_failedSymbols.contains(sym)) continue;
 
       try {

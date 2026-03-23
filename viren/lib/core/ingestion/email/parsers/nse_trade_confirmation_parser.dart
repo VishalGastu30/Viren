@@ -11,12 +11,12 @@ class NseTradeConfirmationParser implements DocumentContentParser {
   PdfDocumentType get supportedType => PdfDocumentType.nseTradeConfirmation;
 
   @override
-  EmailParseResult parseRawText({
+  Future<EmailParseResult> parseRawText({
     required String rawText,
     required String filename,
     required String attachmentHash,
     required DateTime emailDate,
-  }) {
+  }) async {
     final trades = <EmailParsedTrade>[];
     final warnings = <String>[];
     final errors = <String>[];
@@ -91,7 +91,9 @@ class NseTradeConfirmationParser implements DocumentContentParser {
           tradeType: tradeType,
           quantity: qty,
           pricePerUnit: price,
-          tradeDate: emailDate.subtract(const Duration(days: 1)),
+          // NSE Direct dates are used as recorded on the document. Harmony
+          // matching accommodates the time difference automatically.
+          tradeDate: emailDate,
           broker: 'NSE Direct',
           confidence: 80, // NSE Direct Regex Baseline
           sourceMessageHash: attachmentHash, 

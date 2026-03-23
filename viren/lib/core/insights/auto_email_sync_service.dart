@@ -114,8 +114,8 @@ class AutoEmailSyncService {
         return;
       }
 
-      // Scan last 2 days only (not 7 — avoids re-processing old emails)
-      // Deduplication in insertTrade handles the rare duplicate case
+      // CNB-only: SBI SEC contract notes are the sole trade source.
+      // They arrive same day as trade — 2-day lookback is sufficient.
       final since = DateTime.now().subtract(const Duration(days: 2));
 
       final discovery = await importService.discover(

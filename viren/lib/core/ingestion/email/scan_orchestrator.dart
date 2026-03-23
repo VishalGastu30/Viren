@@ -1,10 +1,8 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 
-
-import '../../database/enums.dart';
-import '../../database/repositories/trade_repository.dart';
 import '../../database/daos/import_dao.dart';
+import '../../database/repositories/trade_repository.dart';
 import '../../auth/auth_service.dart';
 import '../../database/app_database.dart';
 import '../../intelligence/confidence_calculator.dart';
@@ -621,107 +619,70 @@ class ScanOrchestrator {
       _counters = _counters.copyWith(pdfsProcessed: classifiedPayloads.length);
 
       // --- STAGE 7: AI PARSING ---
-      // NSE Direct: Qwen fallback (full text) ONLY if regex found 0 trades
-      // Others: legacy AI fallback (candidate windows) ONLY if regex found 0 trades
+      // CNB-only architecture: NSE Direct is no longer processed.
+      // AI fallback only for non-CNB documents if regex found 0 trades.
+      // For SBI Contract Notes: if regex found 0 trades, log diagnostic and skip.
+      // The SbiContractNoteParser v2 regex is authoritative — no AI repair needed.
 
       for (int i = 0; i < classifiedPayloads.length; i++) {
         final payload = classifiedPayloads[i];
-        final isNseDirect = payload.email.from.toLowerCase().contains('nse-direct@nse.co.in');
+        final isSbiCnb = payload.docType == PdfDocumentType.sbiContractNote;
 
         if (payload.regexTrades.isEmpty) {
-          if (isNseDirect) {
-            // ═══ QWEN FALLBACK PATH (NSE Direct) ═══
-            _emit(ScanStage.aiSemanticRepair, StageStatus.running,
-                progress: (i + 1) / classifiedPayloads.length,
-                currentItem: payload.attachment.filename,
-                actionText: 'Regex returned 0. Triggering Qwen fallback for ${payload.attachment.filename}…');
-
+          if (isSbiCnb) {
+            // SBI CNB regex failure — log diagnostic, do NOT use AI fallback.
+            // AI cannot reliably parse the multi-table CNB format.
+            // Surface as a warning for user review.
             developer.log(
-              '[QWEN_GATE] NSE Direct PDF ${payload.attachment.filename} | chars=${payload.extractedText?.length ?? 0} | regex failed, entering fallback',
+              '[CNB_PARSE_FAIL] ${payload.attachment.filename}: '
+              'SbiContractNoteParser v2 found 0 trades. '
+              'PDF may be scanned image (not text). '
+              'Text length: ${payload.extractedText?.length ?? 0} chars.',
               name: 'ScanOrchestrator',
             );
-
-            final aiExtractor = AiTradeExtractor();
-            final result = await aiExtractor.extractNseDirectTrades(
-              extractedText: payload.extractedText ?? '',
-              filename: payload.attachment.filename,
-              emailDate: payload.email.date,
-              sourceMessageHash: payload.attachmentHash!,
+            payload.warnings.add(
+              '⚠️ Could not parse trades from ${payload.attachment.filename}. '
+              'If this is a scanned image PDF, please enter trades manually.',
             );
-
-            payload.aiTrades = result.validatedTrades;
-            payload.confidence = result.validatedTrades.isNotEmpty ? 80 : 0;
-            payload.unresolvedTrades = result.unresolvedTrades.map(
-              (u) => '⚠️ UNRESOLVED: ${u.filename} — ${u.reason}. Raw: ${u.rawJson}'
-            ).toList();
-
-            if (result.validatedTrades.isNotEmpty) {
-              _counters = _counters.copyWith(
-                aiTradesRepaired: _counters.aiTradesRepaired + result.validatedTrades.length,
-              );
-              payload.warnings.add('Qwen fallback: ${result.validatedTrades.length} trades recovered.');
-            }
-            if (result.unresolvedTrades.isNotEmpty) {
-              payload.warnings.addAll(payload.unresolvedTrades);
-            }
-            if (result.validatedTrades.isEmpty && result.unresolvedTrades.isEmpty) {
-              payload.warnings.add('Qwen fallback returned 0 trades for ${payload.attachment.filename}.');
-            }
-
-            developer.log(
-              '[QWEN_GATE_RESULT] ${payload.attachment.filename} | recovered=${result.validatedTrades.length} | unresolved=${result.unresolvedTrades.length}',
-              name: 'ScanOrchestrator',
-            );
-
           } else {
-            // ═══ LEGACY AI FALLBACK (non-NSE-Direct) ═══
-            final isTradeDocument = payload.docType == PdfDocumentType.nseTradeConfirmation ||
-                                    payload.docType == PdfDocumentType.sbiContractNote;
-            if (isTradeDocument) {
+            // Legacy AI fallback for other document types (non-CNB)
+            final isTradeDocument =
+                payload.docType == PdfDocumentType.nseTradeConfirmation;
+            if (isTradeDocument && payload.rawCandidates.isNotEmpty) {
               developer.log(
-                '[AI_LEGACY] Fallback for ${payload.attachment.filename}: regex found 0 trades',
+                '[AI_LEGACY] Fallback for ${payload.attachment.filename}',
                 name: 'ScanOrchestrator',
               );
-              // Legacy AI uses candidate windows
-              if (payload.rawCandidates.isNotEmpty) {
-                final aiExtractor = AiTradeExtractor();
-                final aiTrades = <EmailParsedTrade>[];
-                for (final candidate in payload.rawCandidates) {
-                  final extractedList = await aiExtractor.extractTrades(
-                    candidate: candidate,
-                    documentTypeLabel: payload.docType.name,
-                    emailDate: payload.email.date,
-                    sourceMessageHash: payload.attachmentHash!,
-                  );
-                  aiTrades.addAll(extractedList);
-                }
-                if (aiTrades.isNotEmpty) {
-                  payload.aiTrades = aiTrades;
-                  _counters = _counters.copyWith(
-                    aiTradesRepaired: _counters.aiTradesRepaired + aiTrades.length,
-                  );
-                }
+              final aiExtractor = AiTradeExtractor();
+              final aiTrades = <EmailParsedTrade>[];
+              for (final candidate in payload.rawCandidates) {
+                final extractedList = await aiExtractor.extractTrades(
+                  candidate: candidate,
+                  documentTypeLabel: payload.docType.name,
+                  emailDate: payload.email.date,
+                  sourceMessageHash: payload.attachmentHash!,
+                );
+                aiTrades.addAll(extractedList);
+              }
+              if (aiTrades.isNotEmpty) {
+                payload.aiTrades = aiTrades;
+                _counters = _counters.copyWith(
+                  aiTradesRepaired:
+                      _counters.aiTradesRepaired + aiTrades.length,
+                );
               }
             }
           }
-        } else {
-          developer.log(
-            '[AI_SKIP] ${payload.attachment.filename}: regex found ${payload.regexTrades.length} trades, skipping AI.',
-            name: 'ScanOrchestrator',
-          );
         }
-        
-        // --- DEBUG LOG ---
+
         developer.log(
-          '=== PIPELINE STAGE TRANSITION DEBUGLOG ===\n'
-          'Email Sender: ${payload.email.from}\n'
-          'PDF Filename: ${payload.attachment.filename}\n'
-          'Extracted Text Length: ${payload.extractedText?.length ?? 0}\n'
-          'Extraction Method: ${payload.extractionMethod}\n'
-          'Regex Trades: ${payload.regexTrades.length}\n'
-          'AI Trades: ${payload.aiTrades.length}\n'
-          'Unresolved: ${payload.unresolvedTrades.length}',
-          name: 'ScanOrchestrator'
+          '=== PIPELINE STAGE TRANSITION ===\n'
+          'Sender: ${payload.email.from}\n'
+          'PDF: ${payload.attachment.filename}\n'
+          'Text length: ${payload.extractedText?.length ?? 0}\n'
+          'Regex trades: ${payload.regexTrades.length}\n'
+          'AI trades: ${payload.aiTrades.length}',
+          name: 'ScanOrchestrator',
         );
       }
       _emit(ScanStage.aiSemanticRepair, StageStatus.completed, progress: 1.0);
@@ -785,62 +746,11 @@ class ScanOrchestrator {
           actionText: 'Cross-referencing trades across 3 sources…');
       _counters = _counters.copyWith(snapshotsParsed: totalSnapshots);
 
-      // --- PHASE A: NSE Direct ↔ SBI Contract Note Trade Matching ---
-      // Collect all trades by source
-      final nseDirectTrades = <EmailParsedTrade>[];
-      final sbiCnbTrades = <EmailParsedTrade>[];
-      for (final res in parserResults) {
-        for (final t in res.trades) {
-          if (t.source == TradeSource.nseDirect) {
-            nseDirectTrades.add(t);
-          } else if (t.source == TradeSource.sbiContractNote) {
-            sbiCnbTrades.add(t);
-          }
-        }
-      }
-
-      int matchCount = 0;
-      final matchedNseIndices = <int>{};
-      final matchedCnbIndices = <int>{};
-
-      for (int i = 0; i < nseDirectTrades.length; i++) {
-        final nse = nseDirectTrades[i];
-        for (int j = 0; j < sbiCnbTrades.length; j++) {
-          if (matchedCnbIndices.contains(j)) continue;
-          final cnb = sbiCnbTrades[j];
-
-          // Match criteria: same symbol, same qty, price within 1%, date within 1 day
-          final symbolMatch = nse.symbol.toUpperCase() == cnb.symbol.toUpperCase();
-          final qtyMatch = nse.quantity == cnb.quantity;
-          final priceDiff = (nse.pricePerUnit - cnb.pricePerUnit).abs();
-          final priceMatch = nse.pricePerUnit > 0 && (priceDiff / nse.pricePerUnit) <= 0.01;
-          final dateDiff = nse.tradeDate.difference(cnb.tradeDate).inDays.abs();
-          final dateMatch = dateDiff <= 1;
-
-          if (symbolMatch && qtyMatch && priceMatch && dateMatch) {
-            matchedNseIndices.add(i);
-            matchedCnbIndices.add(j);
-            matchCount++;
-
-            // Upgrade the NSE trade with CNB charge data
-            nseDirectTrades[i] = nse.copyWith(
-              source: TradeSource.both,
-              status: TradeStatus.confirmed,
-              confidence: 95,
-              brokerage: cnb.brokerage,
-              stt: cnb.stt,
-              gst: cnb.gst,
-              otherLevies: cnb.otherLevies,
-              netAmountAfterLevies: cnb.netAmountAfterLevies,
-              trueCostBasis: cnb.trueCostBasis,
-            );
-            break; // Each NSE trade matches at most one CNB trade
-          }
-        }
-      }
-
+      // CNB-only architecture: no cross-referencing needed.
+      // SBI Contract Note is the single authoritative source.
+      // Deduplication is handled by Trade No (rawTradeNo field) in insertTrade.
       developer.log(
-        '[CROSS_REF] Matched $matchCount trades between NSE Direct and SBI Contract Notes',
+        '[CROSS_REF] CNB-only mode: skipping NSE Direct cross-reference.',
         name: 'ScanOrchestrator',
       );
 

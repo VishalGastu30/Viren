@@ -84,6 +84,23 @@ class Trades extends Table {
   /// The raw execution number/ID precisely as it appeared on the statement.
   TextColumn get rawTradeNo => text().named('raw_trade_no').nullable()();
 
+  /// ISIN — permanent NSE/BSE instrument identifier.
+  /// e.g. INF204KB17I5 for GOLDBEES. Never changes unlike symbol.
+  TextColumn get isin => text().named('isin').nullable()();
+
+  /// Settlement date — T+1 from the contract note.
+  /// Distinct from trade date. Useful for cash flow tracking.
+  DateTimeColumn get settlementDate =>
+      dateTime().named('settlement_date').nullable()();
+
+  /// Trade execution time — HH:MM:SS from Annexure A.
+  /// e.g. "10:14:48". Stored as text to avoid timezone issues.
+  TextColumn get tradeTime => text().named('trade_time').nullable()();
+
+  /// NSE Order Number from Annexure A (16 digits).
+  /// Different from Trade No. Stored for audit trail.
+  TextColumn get orderNo => text().named('order_no').nullable()();
+
   /// Parser confidence for auto-imported trades (0–100). 100 = manual entry.
   IntColumn get parseConfidence =>
       integer().named('parse_confidence').withDefault(const Constant(100))();

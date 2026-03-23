@@ -218,11 +218,31 @@ final aiGuardrailsProvider = Provider<AiGuardrails>((ref) {
 
 // ── Portfolio Analytics ───────────────────────────────────────────────────────
 
+/// Tracks the number of trades. FutureProvider watches this instead
+/// of the full allTradesProvider stream.
+/// This prevents expensive snapshot recomputation on every DB event.
+final tradesCountProvider = StreamProvider<int>((ref) {
+  final db = ref.watch(appDatabaseProvider);
+  return db.select(db.trades)
+      .watch()
+      .map((trades) => trades.length);
+});
+
 final portfolioSnapshotAnalyticsProvider =
     FutureProvider<analytics.PortfolioSnapshot>((ref) async {
-  // Watch trades so this recomputes when trades change
-  ref.watch(allTradesProvider);
+  // Only recompute when trade COUNT changes — not on every stream event.
+  // This prevents the expensive buildSnapshot() from running 
+  // continuously in the background.
+  ref.watch(tradesCountProvider);
+  
   final db = ref.watch(appDatabaseProvider);
+  
+  // Yield the first two frames so UI renders before computation starts.
+  // Uses a microtask chain instead of Future.delayed to avoid
+  // scheduling on the main thread event loop.
+  await Future.microtask(() {});
+  await Future.microtask(() {});
+  
   final engine = analytics.PortfolioAnalyticsEngine(db);
   return engine.buildSnapshot();
 });

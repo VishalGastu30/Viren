@@ -30,7 +30,7 @@ class NsePriceService {
           'https://www.nseindia.com/api/quote-equity?symbol=${Uri.encodeComponent(upper)}');
       final response = await http
           .get(uri, headers: _headers)
-          .timeout(const Duration(seconds: 6));
+          .timeout(const Duration(seconds: 4));
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -51,7 +51,7 @@ class NsePriceService {
           'https://www.nseindia.com/api/quote-equity?symbol=${Uri.encodeComponent(upper)}&series=EQ');
       final response = await http
           .get(uri, headers: _headers)
-          .timeout(const Duration(seconds: 6));
+          .timeout(const Duration(seconds: 4));
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
         final price =

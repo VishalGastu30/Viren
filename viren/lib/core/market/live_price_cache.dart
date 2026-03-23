@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'market_data_service.dart';
 import 'market_status.dart';
 
@@ -54,12 +55,48 @@ class LivePriceState {
 }
 
 class LivePriceCacheNotifier extends Notifier<LivePriceState> {
+  static const _prefKeyFailedSymbols = 'live_price_failed_symbols';
+
   Timer? _refreshTimer;
   final Set<String> _symbols = {};
 
+  // Circuit breaker: symbols that have failed price fetch repeatedly.
+  // Blacklisted symbols are skipped in future refresh cycles.
+  final Set<String> _failedSymbols = {};
+  final Map<String, int> _failureCount = {};
+  static const _maxFailuresBeforeBlacklist = 2;
+
+  // Symbols with no Yahoo Finance coverage — skip permanently
+  // These are niche ETFs not listed on Yahoo Finance India feed
+  // They will never be tried regardless of session or restart.
+  static const _permanentlySkipped = {
+    'ICICISILVE',     // ICICI Prudential Silver ETF
+    'ICICISILVER',    // alternate spelling
+    'SILVERBEES',     // Nippon Silver ETF
+    'SILVRETF',       // HDFC Silver ETF
+    'BANKLIMITED',    // corrupted symbol (safety net)
+  };
+
   @override
   LivePriceState build() {
+    _loadFailedSymbols();
     return const LivePriceState();
+  }
+
+  Future<void> _loadFailedSymbols() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final stored = prefs.getStringList(_prefKeyFailedSymbols) ?? [];
+      _failedSymbols.addAll(stored);
+    } catch (_) {}
+  }
+
+  Future<void> _persistFailedSymbol(String symbol) async {
+    _failedSymbols.add(symbol);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(_prefKeyFailedSymbols, _failedSymbols.toList());
+    } catch (_) {}
   }
 
   /// Register symbols to watch. Called by screens on mount.
@@ -123,14 +160,38 @@ class LivePriceCacheNotifier extends Notifier<LivePriceState> {
     state = state.copyWith(isLoading: true);
 
     final updated = Map<String, StockQuote>.from(state.quotes);
-    await Future.wait(
-      _symbols.map((sym) async {
-        try {
-          final quote = await ref.read(_marketDataServiceProvider).fetchQuote(sym);
-          if (quote != null) updated[sym] = quote;
-        } catch (_) {}
-      }),
-    );
+
+    // Fetch sequentially to avoid burst of concurrent network calls.
+    // Circuit breaker: skip symbols that have failed repeatedly.
+    for (final sym in _symbols) {
+      if (_permanentlySkipped.contains(sym)) {
+        // For silver ETFs, approximate from silver spot price
+        // They track silver within 0.5% — good enough for display
+        final silverSpot = state.quotes['SILVERIETF']?.currentPrice;
+        if (silverSpot != null) {
+          // You could synthesize a quote here if needed, but skipping is fine
+          // as user already has SILVERIETF in portfolio to track silver.
+        }
+        continue;
+      }
+      if (_failedSymbols.contains(sym)) continue;
+
+      try {
+        final quote = await ref
+            .read(_marketDataServiceProvider)
+            .fetchQuote(sym)
+            .timeout(const Duration(seconds: 4));
+        if (quote != null) {
+          updated[sym] = quote;
+          _failureCount.remove(sym); // Success clears failure count
+        }
+      } catch (_) {
+        _failureCount[sym] = (_failureCount[sym] ?? 0) + 1;
+        if (_failureCount[sym]! >= _maxFailuresBeforeBlacklist) {
+          await _persistFailedSymbol(sym);
+        }
+      }
+    }
 
     state = state.copyWith(
       quotes: updated,

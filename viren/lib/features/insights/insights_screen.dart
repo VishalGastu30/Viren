@@ -171,7 +171,8 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
     final useRaw = activeAlerts == null ||
         (activeAlerts!.isEmpty && rawAlerts != null && rawAlerts!.isNotEmpty);
     final alerts = useRaw ? (rawAlerts ?? []) : (activeAlerts ?? []);
-    final isLoading = activeAsync.isLoading && rawAsync.isLoading;
+    final isLoading = (activeAsync.isLoading && !activeAsync.hasValue) && 
+                      (rawAsync.isLoading && !rawAsync.hasValue);
 
     if (isLoading) {
       return const Center(

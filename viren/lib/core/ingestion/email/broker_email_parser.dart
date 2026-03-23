@@ -56,6 +56,11 @@ class EmailParsedTrade {
   final TradeStatus status;
   final double? trueCostBasis;
 
+  final String? isin;
+  final DateTime? settlementDate;
+  final String? tradeTimeStr;
+  final String? orderNo;
+
   const EmailParsedTrade({
     required this.symbol,
     required this.instrumentName,
@@ -78,6 +83,10 @@ class EmailParsedTrade {
     this.status = TradeStatus.unconfirmed,
     this.trueCostBasis,
     this.warnings = const [],
+    this.isin,
+    this.settlementDate,
+    this.tradeTimeStr,
+    this.orderNo,
   });
 
   EmailParsedTrade copyWith({
@@ -102,6 +111,10 @@ class EmailParsedTrade {
     TradeStatus? status,
     double? trueCostBasis,
     List<String>? warnings,
+    String? isin,
+    DateTime? settlementDate,
+    String? tradeTimeStr,
+    String? orderNo,
   }) {
     return EmailParsedTrade(
       symbol: symbol ?? this.symbol,
@@ -125,6 +138,10 @@ class EmailParsedTrade {
       status: status ?? this.status,
       trueCostBasis: trueCostBasis ?? this.trueCostBasis,
       warnings: warnings ?? this.warnings,
+      isin: isin ?? this.isin,
+      settlementDate: settlementDate ?? this.settlementDate,
+      tradeTimeStr: tradeTimeStr ?? this.tradeTimeStr,
+      orderNo: orderNo ?? this.orderNo,
     );
   }
 }

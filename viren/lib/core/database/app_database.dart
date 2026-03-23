@@ -67,7 +67,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor]) : super(executor ?? _openConnection());
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 7;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -131,12 +131,35 @@ class AppDatabase extends _$AppDatabase {
             // v6: Assistant memory — compressed conversation summaries
             await m.createTable(assistantMemories);
           }
+          if (from < 7) {
+            // v7: CNB-only import — ISIN, settlement date, trade time, order number
+            await m.addColumn(trades, trades.isin as GeneratedColumn);
+            await m.addColumn(trades, trades.settlementDate as GeneratedColumn);
+            await m.addColumn(trades, trades.tradeTime as GeneratedColumn);
+            await m.addColumn(trades, trades.orderNo as GeneratedColumn);
+          }
         },
         beforeOpen: (details) async {
           // Enable WAL mode for better concurrent read performance on mobile.
           await customStatement('PRAGMA journal_mode=WAL');
           // Enforce FK integrity at runtime (SQLite default: OFF).
           await customStatement('PRAGMA foreign_keys=ON');
+
+          // Clean up corrupted symbols from bad imports.
+          // These cause live price fetch loops that lag the UI.
+          await customStatement(
+            "DELETE FROM trades WHERE instrument_symbol LIKE '%LIMITED' "
+            "OR instrument_symbol = 'UNKNOWN' "
+            "OR instrument_symbol = 'BANKLIMITED' "
+            "OR instrument_symbol LIKE '%STATEMENT%' "
+            "OR length(instrument_symbol) > 20",
+          );
+          await customStatement(
+            "DELETE FROM holdings WHERE instrument_symbol LIKE '%LIMITED' "
+            "OR instrument_symbol = 'UNKNOWN' "
+            "OR instrument_symbol = 'BANKLIMITED' "
+            "OR length(instrument_symbol) > 20",
+          );
         },
       );
 

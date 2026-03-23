@@ -24,9 +24,33 @@ class PdfClassifier {
   }) {
     final lowerName = filename.toLowerCase();
     final lowerSender = senderEmail.toLowerCase();
-    
+
+    // ── Reject non-trade SBI documents by filename prefix ──────────────────
+    // These are margin reports, fund statements, and account statements
+    // that contain no trade execution data.
+    if (lowerName.startsWith('dmrg_')) return PdfDocumentType.unknown;
+    if (lowerName.startsWith('funds_')) return PdfDocumentType.unknown;
+    if (lowerName.contains('weekly_statement')) return PdfDocumentType.unknown;
+    if (lowerName.contains('statement_of_account')) return PdfDocumentType.unknown;
+    if (lowerName.contains('margin_statement')) return PdfDocumentType.unknown;
+
     // Normalize text for easier keyword searching (compress whitespace)
     final normalizedText = rawText.replaceAll(RegExp(r'\s+'), ' ');
+
+    // ── Reject by content keywords ────────────────────────────────────────
+    if (normalizedText.contains('DAILY MARGIN REPORT') ||
+        normalizedText.contains('Daily Margin Report')) {
+      return PdfDocumentType.unknown;
+    }
+    if (normalizedText.contains('WEEKLY STATEMENT') ||
+        normalizedText.contains('Weekly Statement of Account')) {
+      return PdfDocumentType.unknown;
+    }
+
+    // ── Positive classifier: CNB filename pattern ─────────────────────────
+    if (lowerName.startsWith('cnb_') && lowerName.contains('contract')) {
+      return PdfDocumentType.sbiContractNote;
+    }
 
     if (lowerSender.contains('nse-direct@nse.co.in')) {
       // Sender-first: NSE Direct emails are ALWAYS nseTradeConfirmation

@@ -6,7 +6,6 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../auth/auth_service.dart';
-import 'broker_email_filter.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ScannerController — Coordinates incremental Gmail scanning.
@@ -70,9 +69,7 @@ class ScannerController {
     final gmailApi = gmail.GmailApi(authClient);
 
     try {
-      // Build Gmail query for exact target senders + attachments
-      final sendersQuery = targetSenderAddresses.map((s) => 'from:$s').join(' OR ');
-      
+      // Build Gmail query for CNB-only mode
       // Determine time bounds
       String dateFilter = '';
       if (since != null) {
@@ -82,7 +79,7 @@ class ScannerController {
       }
       // If since is null, this is an unbounded full historical scan.
 
-      final q = '($sendersQuery) has:attachment$dateFilter';
+      final q = 'from:digidocemail@sbicapsec.com filename:CNB$dateFilter';
 
       // Collect all message IDs (with pagination)
       final allMessageIds = <String>[];

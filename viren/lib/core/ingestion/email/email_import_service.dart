@@ -92,6 +92,7 @@ class EmailImportResult {
   final int successfulTrades;
   final int failedTrades;
   final List<String> errors;
+  final List<String> warnings;
 
   const EmailImportResult({
     required this.importId,
@@ -99,6 +100,7 @@ class EmailImportResult {
     required this.successfulTrades,
     required this.failedTrades,
     required this.errors,
+    this.warnings = const [],
   });
 }
 
@@ -418,12 +420,19 @@ class EmailImportService {
       // Non-fatal — score update failure must never block trade import
     }
 
+    final allWarnings = <String>[];
+    allWarnings.addAll(preview.ledgerDiscrepancies);
+    for (final result in preview.results) {
+      allWarnings.addAll(result.warnings);
+    }
+
     return EmailImportResult(
       importId: importId,
       totalTrades: total,
       successfulTrades: successful,
       failedTrades: total - successful,
       errors: errors,
+      warnings: allWarnings,
     );
   }
 }

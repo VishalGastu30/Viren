@@ -1,12 +1,10 @@
 import 'package:drift/drift.dart';
 import 'package:flutter/services.dart';
 import '../../core/database/app_database.dart';
-import '../../core/ai/model_download_service.dart';
+import '../../core/ai/groq_service.dart';
 
 class MemoryService {
   final AppDatabase db;
-  static const _channel = MethodChannel('com.viren.viren/pdf_crypto');
-
   // Maximum number of memories to keep — older ones are pruned
   static const _maxMemories = 10;
 
@@ -40,11 +38,11 @@ class MemoryService {
           'what data was discussed, any specific stocks or numbers mentioned. '
           'Plain text, no markdown.\n\n$conversationText\n\nSummary:';
 
-      final modelPath = await ModelDownloadService.getModelPath();
-      final String? summary = await _channel.invokeMethod('chat', {
-        'prompt': summaryPrompt,
-        'modelPath': modelPath,
-      });
+      final String? summary = await GroqService.chat(
+        prompt: summaryPrompt,
+        systemPrompt: "You are a helpful assistant.",
+        model: GroqService.lightModel,
+      );
 
       if (summary == null || summary.trim().isEmpty) return;
 

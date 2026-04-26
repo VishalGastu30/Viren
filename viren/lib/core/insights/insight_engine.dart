@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:drift/drift.dart' as drift;
+import '../../core/ai/groq_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../database/app_database.dart';
 import '../market/nse_price_service.dart';
@@ -29,9 +30,6 @@ class InsightEngine {
   // Shared with BehaviourEngine so it can do mirror warnings
   // without a second price fetch.
   Map<String, double> _lastFetchedPrices = {};
-
-  static const _llmChannel =
-      MethodChannel('com.viren.viren/pdf_crypto');
 
   InsightEngine(this._db) {
     _alertService = AlertTriggerService(_db);
@@ -230,25 +228,16 @@ class InsightEngine {
 
     if (newsItems.isEmpty) return;
 
-    // Get model path for Qwen
-    String? modelPath;
-    try {
-      modelPath = await _llmChannel.invokeMethod<String>('getModelPath');
-    } catch (_) {
-      return; // Model not available — skip news intelligence
-    }
-
     // Build holding names for context
-    // Map NSE symbols to common names for better Qwen matching
+    // Map NSE symbols to common names for better LLM matching
     final holdingContext = _buildHoldingContext(symbols, holdings);
 
     for (final item in newsItems.take(5)) {
-      // Rate limit: max 5 Qwen calls per background run
+      // Rate limit: max 5 Groq calls per background run
       try {
         final insight = await _scoreNewsRelevance(
           newsItem: item,
           holdingContext: holdingContext,
-          modelPath: '$modelPath/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv1280.task',
         );
 
         if (insight != null) {
@@ -266,19 +255,15 @@ class InsightEngine {
     }
   }
 
-  /// Asks Qwen: is this news relevant to any of my holdings?
+  /// Asks Groq: is this news relevant to any of my holdings?
   /// Returns null if not relevant, or a map with symbol + insight + score.
   Future<Map<String, dynamic>?> _scoreNewsRelevance({
     required RssItem newsItem,
     required String holdingContext,
-    required String modelPath,
   }) async {
-    final prompt = '''You are analyzing financial news for a retail investor.
+    final systemPrompt = '''You are analyzing financial news for a retail investor.
 
 Their holdings: $holdingContext
-
-News headline: "${newsItem.title}"
-News summary: "${newsItem.description}"
 
 Answer in this exact JSON format only, no other text:
 {"relevant": true/false, "symbol": "SYMBOL_OR_NULL", "score": 1-10, "insight": "one sentence max"}
@@ -291,18 +276,17 @@ Rules:
 
 If not relevant to any holding, return: {"relevant": false, "symbol": null, "score": 0, "insight": ""}''';
 
+    final prompt = '''News headline: "${newsItem.title}"
+News summary: "${newsItem.description}"''';
+
     try {
-      final response = await _llmChannel.invokeMethod<String>('chat', {
-        'prompt': prompt,
-        'modelPath': modelPath,
-      });
+      final json = await GroqService.chatJson(
+        prompt: prompt,
+        systemPrompt: systemPrompt,
+        model: GroqService.lightModel,
+      );
 
-      if (response == null || response.isEmpty) return null;
-
-      // Parse JSON response
-      final cleaned =
-          response.replaceAll('```json', '').replaceAll('```', '').trim();
-      final json = jsonDecode(cleaned) as Map<String, dynamic>;
+      if (json == null) return null;
 
       if (json['relevant'] != true) return null;
       if ((json['score'] as int? ?? 0) < 6) return null;

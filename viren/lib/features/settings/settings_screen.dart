@@ -3,8 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/ai/model_download_service.dart';
-import '../../core/ai/model_setup_screen.dart';
+
 import '../../core/theme/design_tokens.dart';
 import '../../core/animations/animation_presets.dart';
 import '../../core/security/biometric_service.dart';
@@ -134,12 +133,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 const Icon(Icons.warning_amber_rounded, color: DesignTokens.crimsonWarning),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Text('Wipe Local Data', style: Theme.of(context).textTheme.titleLarge?.copyWith(color: DesignTokens.crimsonWarning)),
+                  child: Text('Deep Clean Data', style: Theme.of(context).textTheme.titleLarge?.copyWith(color: DesignTokens.crimsonWarning)),
                 ),
               ]),
               const SizedBox(height: 16),
               Text(
-                'This will permanently erase all holdings, trades, journal entries, and settings from this device.\n\nThis action is irreversible.',
+                'This will permanently erase all holdings, trades, AI conversations, memories, and settings from this device. It restores Viren to a factory state.\n\nThis action is irreversible.',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(height: 1.6, color: DesignTokens.textMediumContrast),
               ),
               const SizedBox(height: 28),
@@ -172,11 +171,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           await db.delete(db.imports).go();
                           await db.delete(db.priceHistory).go();
                           await db.delete(db.integrityMetadata).go();
+                          await db.delete(db.columnMappings).go();
+                          await db.delete(db.emailCredentials).go();
+                          await db.delete(db.conversations).go();
+                          await db.delete(db.conversationMessages).go();
+                          await db.delete(db.assistantMemories).go();
                         });
+                        
+                        // Wipe all SharedPreferences settings
+                        final prefs = ref.read(sharedPreferencesProvider);
+                        await prefs.clear();
+                        
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: const Text('All local data wiped.'),
+                              content: const Text('Device Deep Cleaned. Restart app to apply.'),
                               backgroundColor: DesignTokens.crimsonWarning,
                               behavior: SnackBarBehavior.floating,
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -203,7 +212,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       elevation: 0,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     ),
-                    child: const Text('Wipe Everything'),
+                    child: const Text('Deep Clean All Data'),
                   ),
                 ),
               ]),
@@ -413,87 +422,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
               ),
             ],
-            const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
-            _SettingsTile(
-              icon: Icons.smart_toy_outlined,
-              title: 'Viren AI Model',
-              subtitle: 'Re-download the local AI model if the assistant stops working.',
-              onTap: () async {
-                final ready = await ModelDownloadService.isModelReady();
-                if (!context.mounted) return;
-                showDialog(
-                  context: context,
-                  builder: (ctx) => Dialog(
-                    backgroundColor: DesignTokens.graphiteSurface,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(24)),
-                    child: Padding(
-                      padding: const EdgeInsets.all(28),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            ready ? 'AI Model Installed' : 'AI Model Not Found',
-                            style: Theme.of(context).textTheme.titleLarge,
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            ready
-                                ? 'Gemma 3 4B is installed and working. Re-download only if the assistant is behaving unexpectedly.'
-                                : 'The AI model has not been downloaded yet. Download it to use the assistant.',
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: DesignTokens.textMediumContrast,
-                              height: 1.5,
-                            ),
-                          ),
-                          const SizedBox(height: 24),
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton(
-                              onPressed: () async {
-                                Navigator.pop(ctx);
-                                if (ready) {
-                                  await ModelDownloadService.deleteModel();
-                                }
-                                if (!context.mounted) return;
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => ModelSetupScreen(
-                                      onComplete: () => Navigator.pop(context),
-                                    ),
-                                  ),
-                                );
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: DesignTokens.obsidianTeal,
-                                foregroundColor: DesignTokens.graphiteBase,
-                                padding: const EdgeInsets.symmetric(vertical: 16),
-                                elevation: 0,
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(14)),
-                              ),
-                              child: Text(ready ? 'Re-download Model' : 'Download Model'),
-                            ),
-                          ),
-                          if (ready) ...[
-                            const SizedBox(height: 8),
-                            SizedBox(
-                              width: double.infinity,
-                              child: TextButton(
-                                onPressed: () => Navigator.pop(ctx),
-                                child: const Text('Cancel'),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
+
             const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
             _SettingsTile(
               icon: Icons.memory_rounded,
@@ -855,9 +784,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             const Divider(indent: 56, height: 1, color: DesignTokens.graphiteBase),
             _SettingsTile(
               icon: Icons.delete_forever_rounded,
-              title: 'Wipe All Local Data',
+              title: 'Deep Clean Data',
               iconColor: DesignTokens.crimsonWarning,
               titleColor: DesignTokens.crimsonWarning,
+              subtitle: 'Wipes all database tables and settings completely.',
               onTap: _showResetDialog,
             ),
           ]),

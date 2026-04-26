@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:drift/drift.dart';
-import 'package:flutter/services.dart';
+import '../../core/ai/groq_service.dart';
 import 'package:workmanager/workmanager.dart';
 import '../database/app_database.dart';
 import 'notification_service.dart';
@@ -101,31 +101,21 @@ class WeeklyDigestService {
           maxFeedsPerRun: 2, maxItemsPerFeed: 5);
     } catch (_) {}
 
-    // ── Build Qwen prompt for weekly synthesis ────────────────────
-    const channel = MethodChannel('com.viren.viren/pdf_crypto');
-    String? modelPath;
-    try {
-      final base = await channel.invokeMethod<String>('getModelPath');
-      modelPath =
-          '$base/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv1280.task';
-    } catch (_) {}
-
     String weeklyBody;
 
-    if (modelPath != null) {
-      final newsHeadlines = weekendNews.isEmpty
-          ? 'No recent news fetched.'
-          : weekendNews.take(4)
-              .map((n) => '- ${n.title} (${n.source})')
-              .join('\n');
+    final newsHeadlines = weekendNews.isEmpty
+        ? 'No recent news fetched.'
+        : weekendNews.take(4)
+            .map((n) => '- ${n.title} (${n.source})')
+            .join('\n');
 
-      final portfolioSummary = holdingLines.isEmpty
-          ? 'No holdings data.'
-          : holdingLines.join('\n');
+    final portfolioSummary = holdingLines.isEmpty
+        ? 'No holdings data.'
+        : holdingLines.join('\n');
 
-      final pnlSign = totalPct >= 0 ? '+' : '';
-      final prompt =
-          '''You are Viren, a personal investment advisor. Write a concise Saturday weekly digest for a retail investor.
+    final pnlSign = totalPct >= 0 ? '+' : '';
+    final prompt =
+        '''You are Viren, a personal investment advisor. Write a concise Saturday weekly digest for a retail investor.
 
 Portfolio this week:
 $portfolioSummary
@@ -143,28 +133,23 @@ Write a 3-4 sentence weekly summary starting with "This week:". Include:
 3. One thing to watch next week based on the news
 Be specific and use actual numbers. Plain text only. No bullet points. No markdown.''';
 
-      try {
-        final response = await channel.invokeMethod<String>('chat', {
-          'prompt': prompt,
-          'modelPath': modelPath,
-        });
-
-        if (response != null && response.trim().isNotEmpty) {
-          weeklyBody = response.trim()
-              .replaceAllMapped(
-                  RegExp(r'\*\*(.+?)\*\*'), (m) => m.group(1) ?? '')
-              .replaceAll(r'$1', '');
-        } else {
-          weeklyBody = _buildFallbackBody(
-              weekAlerts.length, drawdowns, opportunities, newsAlerts,
-              totalPct, holdingLines);
-        }
-      } catch (_) {
+    try {
+      final response = await GroqService.chat(
+        prompt: prompt,
+        systemPrompt: "You are an expert investment advisor.",
+        model: GroqService.heavyModel,
+      );
+      if (response != null && response.trim().isNotEmpty) {
+        weeklyBody = response.trim()
+            .replaceAllMapped(
+                RegExp(r'\*\*(.+?)\*\*'), (m) => m.group(1) ?? '')
+            .replaceAll(r'$1', '');
+      } else {
         weeklyBody = _buildFallbackBody(
             weekAlerts.length, drawdowns, opportunities, newsAlerts,
             totalPct, holdingLines);
       }
-    } else {
+    } catch (_) {
       weeklyBody = _buildFallbackBody(
           weekAlerts.length, drawdowns, opportunities, newsAlerts,
           totalPct, holdingLines);
@@ -346,14 +331,6 @@ Be specific and use actual numbers. Plain text only. No bullet points. No markdo
       }
     } catch (_) {}
 
-    // ── Build Qwen prompt ──────────────────────────────────────────
-    const channel = MethodChannel('com.viren.viren/pdf_crypto');
-    String? modelPath;
-    try {
-      final base = await channel.invokeMethod<String>('getModelPath');
-      modelPath =
-          '$base/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv1280.task';
-    } catch (_) {}
 
     // Build holdings context
     final holdingsSummary = holdings.map((h) {
@@ -380,9 +357,8 @@ Be specific and use actual numbers. Plain text only. No bullet points. No markdo
 
     String reportBody;
 
-    if (modelPath != null) {
-      final prompt =
-          '''You are Viren, a personal investment advisor. The Indian market opens Monday at 9:15 AM IST.
+    final prompt =
+        '''You are Viren, a personal investment advisor. The Indian market opens Monday at 9:15 AM IST.
 Write a weekend briefing for a retail investor.
 
 Their holdings: $holdingsSummary
@@ -395,33 +371,28 @@ ${newsHeadlines.isEmpty ? 'No news fetched.' : newsHeadlines}
 
 $qwenFocus Plain text only. No markdown. No bullet points.''';
 
-      try {
-        final response = await channel.invokeMethod<String>('chat', {
-          'prompt': prompt,
-          'modelPath': modelPath,
-        });
-
-        if (response != null && response.trim().isNotEmpty) {
-          reportBody = response.trim()
-              .replaceAllMapped(
-                  RegExp(r'\*\*(.+?)\*\*'), (m) => m.group(1) ?? '')
-              .replaceAll(r'$1', '');
-          if (!reportBody.startsWith('Markets open')) {
-            reportBody = 'Markets open in ~14 hours. $reportBody';
-          }
-        } else {
-          reportBody = _buildFallbackSundayReport(
-              sp500Change, goldChange, holdingsSummary);
+    try {
+      final response = await GroqService.chat(
+        prompt: prompt,
+        systemPrompt: "You are an expert investment advisor.",
+        model: GroqService.heavyModel,
+      );
+      if (response != null && response.trim().isNotEmpty) {
+        reportBody = response.trim()
+            .replaceAllMapped(
+                RegExp(r'\*\*(.+?)\*\*'), (m) => m.group(1) ?? '')
+            .replaceAll(r'$1', '');
+        if (!reportBody.startsWith('Markets open')) {
+          reportBody = 'Markets open in ~14 hours. $reportBody';
         }
-      } catch (_) {
+      } else {
         reportBody = _buildFallbackSundayReport(
             sp500Change, goldChange, holdingsSummary);
       }
-    } else {
+    } catch (_) {
       reportBody = _buildFallbackSundayReport(
           sp500Change, goldChange, holdingsSummary);
     }
-
     // Fire notification
     await NotificationService.showAlertNotification(
       id: 9998,

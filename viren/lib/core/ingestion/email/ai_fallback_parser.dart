@@ -1,5 +1,4 @@
-import 'dart:convert';
-import 'package:ollama_dart/ollama_dart.dart';
+import '../groq_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AI Fallback Parser — Classification ONLY (V2)
@@ -11,7 +10,7 @@ import 'package:ollama_dart/ollama_dart.dart';
 // Constraints:
 //   • Input  = sanitised text excerpt (first 500 chars max)
 //   • Output = document classification label
-//   • Runs offline via local Ollama instance
+//   • Runs via Groq API (Llama 3.1 8B is sufficient for classification)
 //   • Deterministic seed for reproducibility
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -29,22 +28,13 @@ class AiClassificationResult {
 }
 
 class AiFallbackParser {
-  final String _model;
-  final String _ollamaHost;
-
-  AiFallbackParser({
-    String model = 'qwen2.5:3b',
-    String ollamaHost = 'http://localhost:11434',
-  })  : _model = model,
-        _ollamaHost = ollamaHost;
+  AiFallbackParser();
 
   /// Classifies a PDF's text content into a document type.
   ///
   /// This does NOT extract trades. It only labels the document so the user
   /// can decide if it warrants manual attention.
   Future<AiClassificationResult> classify(String text, {String broker = 'Unknown'}) async {
-    final client = OllamaClient(baseUrl: _ollamaHost);
-
     // Truncate to 500 chars to minimise data exposure
     final truncated = text.length > 500 ? text.substring(0, 500) : text;
 
@@ -62,29 +52,20 @@ $truncated
 ''';
 
     try {
-      final response = await client.generateCompletion(
-        request: GenerateCompletionRequest(
-          model: _model,
-          prompt: prompt,
-          options: RequestOptions(
-            temperature: 0.0,
-            seed: 42,
-          ),
-        ),
+      final parsed = await GroqService.chatJson(
+        prompt: prompt,
+        systemPrompt: "You are a financial document classifier.",
+        model: GroqService.lightModel,
       );
 
-      final responseText = response.response ?? '';
-
-      final jsonStr = _extractJsonObject(responseText);
-      if (jsonStr == null) {
+      if (parsed == null) {
         return const AiClassificationResult(
           documentType: 'unknown',
           confidence: 0,
-          warnings: ['AI returned non-JSON response'],
+          warnings: ['AI returned invalid response'],
         );
       }
 
-      final parsed = json.decode(jsonStr) as Map<String, dynamic>;
       final docType = (parsed['document_type'] as String?) ?? 'unknown';
       final conf = (parsed['confidence'] as num?)?.toInt() ?? 0;
 
@@ -101,13 +82,4 @@ $truncated
     }
   }
 
-  /// Extract a JSON object from potentially mixed text response.
-  String? _extractJsonObject(String text) {
-    final braceStart = text.indexOf('{');
-    final braceEnd = text.lastIndexOf('}');
-    if (braceStart >= 0 && braceEnd > braceStart) {
-      return text.substring(braceStart, braceEnd + 1);
-    }
-    return null;
-  }
-}
+

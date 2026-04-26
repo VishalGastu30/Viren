@@ -6,6 +6,37 @@ import '../../core/database/app_database.dart';
 import '../../core/database/enums.dart' as db_enums;
 import '../../core/market/market_data_service.dart';
 import '../../core/market/nse_price_service.dart';
+import '../../core/intelligence/news/yahoo_quote_service.dart';
+
+class _CompareItem {
+  final String symbol;
+  final double? invested;
+  final double? currentValue;
+  final double? cmp;
+  final double? qty;
+  final double? avgCost;
+  final String pnlStr;
+  final String returnStr;
+  final String weightStr;
+  final int? daysHeld;
+  final bool isExternal;
+  final String yahooSymbolForChart;
+
+  _CompareItem({
+    required this.symbol,
+    required this.invested,
+    required this.currentValue,
+    required this.cmp,
+    required this.qty,
+    required this.avgCost,
+    required this.pnlStr,
+    required this.returnStr,
+    required this.weightStr,
+    required this.daysHeld,
+    required this.isExternal,
+    required this.yahooSymbolForChart,
+  });
+}
 
 // ─── Data Models ──────────────────────────────────────────────────────────────
 
@@ -41,17 +72,17 @@ class HoldingAnalysis {
 
   String get pnlStr {
     if (unrealisedPnL == null) return 'N/A';
-    final sign = unrealisedPnL! >= 0 ? '+' : '';
-    return '$sign₹${unrealisedPnL!.toStringAsFixed(0)}';
+    final sign = unrealisedPnL! >= 0 ? '+' : '-';
+    return '$sign₹${unrealisedPnL!.abs().toStringAsFixed(2)}';
   }
 
   String get returnStr {
     if (returnPct == null) return 'N/A';
     final sign = returnPct! >= 0 ? '+' : '';
-    return '$sign${returnPct!.toStringAsFixed(1)}%';
+    return '$sign${returnPct!.toStringAsFixed(2)}%';
   }
 
-  String get weightStr => '${portfolioWeight.toStringAsFixed(1)}%';
+  String get weightStr => '${portfolioWeight.toStringAsFixed(2)}%';
 }
 
 class PortfolioSnapshot {
@@ -60,6 +91,10 @@ class PortfolioSnapshot {
   final double totalCurrentValue;
   final double totalPnL;
   final double totalReturnPct;
+  final double totalBrokerage;
+  final double totalStt;
+  final double totalGst;
+  final double totalOtherLevies;
   final double totalCharges;
   final int totalTrades;
   final String firstTradeDate;
@@ -81,6 +116,10 @@ class PortfolioSnapshot {
     required this.totalCurrentValue,
     required this.totalPnL,
     required this.totalReturnPct,
+    required this.totalBrokerage,
+    required this.totalStt,
+    required this.totalGst,
+    required this.totalOtherLevies,
     required this.totalCharges,
     required this.totalTrades,
     required this.firstTradeDate,
@@ -98,13 +137,13 @@ class PortfolioSnapshot {
   bool get isEmpty => holdings.isEmpty;
 
   String get pnlStr {
-    final sign = totalPnL >= 0 ? '+' : '';
-    return '$sign₹${totalPnL.toStringAsFixed(0)}';
+    final sign = totalPnL >= 0 ? '+' : '-';
+    return '$sign₹${totalPnL.abs().toStringAsFixed(2)}';
   }
 
   String get returnStr {
     final sign = totalReturnPct >= 0 ? '+' : '';
-    return '$sign${totalReturnPct.toStringAsFixed(1)}%';
+    return '$sign${totalReturnPct.toStringAsFixed(2)}%';
   }
 }
 
@@ -123,6 +162,8 @@ enum QuestionIntent {
   tradeHistory,
   daysHeld,
   whatCanYouDo,
+  comparison,
+  specificHolding,  // "how is ITC" — per-stock query
   general, // not portfolio-specific — let model answer freely
 }
 
@@ -166,7 +207,7 @@ class PortfolioAnalyticsEngine {
   PortfolioAnalyticsEngine(this.db);
 
   // ── Detect intent from user message ────────────────────────────────────────
-  static QuestionIntent detectIntent(String message) {
+  static QuestionIntent detectIntent(String message, {List<HoldingAnalysis>? holdings}) {
     final m = message.toLowerCase();
 
     // What can you do — check before portfolio questions
@@ -175,19 +216,28 @@ class PortfolioAnalyticsEngine {
       return QuestionIntent.whatCanYouDo;
     }
 
+    // Specific holding query — "how is ITC", "tell me about GOLDBEES"
+    if (holdings != null && holdings.isNotEmpty) {
+      for (final h in holdings) {
+        if (m.contains(h.symbol.toLowerCase())) {
+          return QuestionIntent.specificHolding;
+        }
+      }
+    }
+
     // Best performer
-    if (_has(m, ['best', 'top', 'highest', 'most profit', 'performing best',
-        'best return', 'highest return', 'leading'])) {
+    if (_has(m, ['best', 'top', 'highest return', 'most profit', 'performing best',
+        'best return', 'leading']) && !_has(m, ['compare', 'vs', 'versus'])) {
       return QuestionIntent.bestPerformer;
     }
 
     // Worst performer
     if (_has(m, ['worst', 'lowest', 'underperform', 'losing', 'most loss',
-        'bad', 'negative', 'drag', 'weakest'])) {
+        'drag', 'weakest'])) {
       return QuestionIntent.worstPerformer;
     }
 
-    // Absolute profit (rupee gain, not percentage)
+    // Absolute profit
     if (_has(m, ['most money', 'absolute', 'rupee gain', 'highest profit',
         'largest gain', 'maximum profit', 'most rupee'])) {
       return QuestionIntent.absoluteProfit;
@@ -199,21 +249,22 @@ class PortfolioAnalyticsEngine {
       return QuestionIntent.totalReturn;
     }
 
-    // Portfolio summary
+    // Portfolio summary / granular breakdown
     if (_has(m, ['summary', 'overview', 'all holdings', 'full portfolio',
-        'everything', 'show all', 'list all'])) {
+        'everything', 'show all', 'list all', 'granular', 'breakdown',
+        'total invested'])) {
       return QuestionIntent.portfolioSummary;
     }
 
     // Biggest position
-    if (_has(m, ['biggest', 'largest', 'most invested', 'highest allocation',
-        'most capital', 'biggest position', 'largest position'])) {
+    if (_has(m, ['biggest', 'largest position', 'most invested', 'highest allocation',
+        'most capital', 'biggest position'])) {
       return QuestionIntent.biggestPosition;
     }
 
-    // Concentration / risk
-    if (_has(m, ['concentrated', 'concentration', 'too much', 'overweight',
-        'risk', 'dependent', 'exposure'])) {
+    // Concentration (but NOT generic 'risk' — that goes to general for concept questions)
+    if (_has(m, ['concentrated', 'concentration', 'overweight',
+        'dependent', 'exposure'])) {
       return QuestionIntent.concentration;
     }
 
@@ -224,21 +275,26 @@ class PortfolioAnalyticsEngine {
     }
 
     // Charges
-    if (_has(m, ['charge', 'brokerage', 'stt', 'fee', 'cost', 'tax',
-        'expense', 'paid'])) {
+    if (_has(m, ['charge', 'brokerage', 'stt', 'fee', 'expense',
+        'paid in charges'])) {
       return QuestionIntent.charges;
     }
 
     // Trade history
-    if (_has(m, ['trade', 'history', 'when did', 'first trade', 'bought',
+    if (_has(m, ['trade history', 'when did', 'first trade', 'bought',
         'purchased', 'sold'])) {
       return QuestionIntent.tradeHistory;
     }
 
     // Days held
-    if (_has(m, ['how long', 'days', 'held', 'since when', 'duration',
+    if (_has(m, ['how long', 'days held', 'since when',
         'holding period'])) {
       return QuestionIntent.daysHeld;
+    }
+
+    // Comparison
+    if (_has(m, ['compare', 'vs', 'versus'])) {
+      return QuestionIntent.comparison;
     }
 
     return QuestionIntent.general;
@@ -263,6 +319,10 @@ class PortfolioAnalyticsEngine {
         totalCurrentValue: 0,
         totalPnL: 0,
         totalReturnPct: 0,
+        totalBrokerage: 0,
+        totalStt: 0,
+        totalGst: 0,
+        totalOtherLevies: 0,
         totalCharges: 0,
         totalTrades: trades.length,
         firstTradeDate: 'N/A',
@@ -312,6 +372,8 @@ class PortfolioAnalyticsEngine {
 
     // First pass — calculate totals for weight calculation
     for (final h in holdings) {
+      if (h.totalQuantity <= 0) continue; // PHASE 3A: GLOBAL ZERO-UNIT PURGE
+      
       final symbol = h.instrumentSymbol.toUpperCase();
       final invested = h.investedValue;
       final cmp = prices[symbol];
@@ -326,6 +388,8 @@ class PortfolioAnalyticsEngine {
 
     // Second pass — build full analysis with weights
     for (final h in holdings) {
+      if (h.totalQuantity <= 0) continue; // PHASE 3A: GLOBAL ZERO-UNIT PURGE
+      
       final symbol = h.instrumentSymbol.toUpperCase();
       final qty = h.totalQuantity;
       final avgCost = h.averagePrice;
@@ -369,7 +433,16 @@ class PortfolioAnalyticsEngine {
 
     // Charges
     double totalCharges = 0;
+    double totalB = 0;
+    double totalSttV = 0;
+    double totalGstV = 0;
+    double totalOtherV = 0;
+
     for (final t in trades) {
+      totalB += t.brokerage ?? 0;
+      totalSttV += t.stt ?? 0;
+      totalGstV += t.gst ?? 0;
+      totalOtherV += t.otherLevies ?? 0;
       totalCharges += (t.brokerage ?? 0) +
           (t.stt ?? 0) +
           (t.gst ?? 0) +
@@ -452,6 +525,10 @@ class PortfolioAnalyticsEngine {
       totalCurrentValue: totalCurrentValue,
       totalPnL: totalPnL,
       totalReturnPct: totalReturnPct,
+      totalBrokerage: totalB,
+      totalStt: totalSttV,
+      totalGst: totalGstV,
+      totalOtherLevies: totalOtherV,
       totalCharges: totalCharges,
       totalTrades: trades.length,
       firstTradeDate: firstTradeDate,
@@ -468,205 +545,467 @@ class PortfolioAnalyticsEngine {
   }
 
   // ── Build guided prompt for a specific intent ───────────────────────────────
-  // This is the key method — Flutter calculates everything, model just narrates.
-  static String buildGuidedPrompt({
+  // Architecture: Dart computes everything, LLM only paraphrases the draft.
+  // Every prompt contains a DRAFT RESPONSE that the model lightly rephrases.
+  static Future<String> buildGuidedPrompt({
     required QuestionIntent intent,
     required PortfolioSnapshot snap,
     required String userMessage,
-  }) {
+    List<String> externalSymbols = const [],
+  }) async {
     switch (intent) {
       case QuestionIntent.whatCanYouDo:
-        return '''The user asked: "$userMessage"
-
-Tell them in 3-4 sentences what you can help with. Include: analysing portfolio performance, tracking P&L, comparing holdings, showing charges, answering questions about their investments. Keep it warm and specific. Do not use bullet points.''';
+        return 'DRAFT: I can help you understand your portfolio in depth. '
+            'I track your exact P&L across all ${snap.holdings.length} holdings with live prices, '
+            'break down your charges (brokerage, STT, GST), compare which holdings are performing best or worst, '
+            'and answer questions about your investments. Ask me anything about your portfolio.';
 
       case QuestionIntent.bestPerformer:
-        if (!snap.hasPriceData) {
-          return _noPricePrompt(userMessage);
-        }
-        if (snap.bestByReturn == null) return _noDataPrompt(userMessage);
+        if (!snap.hasPriceData) return _noPriceDraft();
+        if (snap.bestByReturn == null) return _noDataDraft();
+        
         final best = snap.bestByReturn!;
-        final others = snap.holdings
-            .where((h) => h.symbol != best.symbol && h.hasPriceData)
-            .map((h) => '${h.symbol} ${h.returnStr}')
-            .join(', ');
-        return '''The user asked: "$userMessage"
-
-VERIFIED DATA — trust these numbers exactly:
-Best performing holding: ${best.symbol}
-Return: ${best.returnStr}
-Qty: ${best.qty.toStringAsFixed(0)} units
-Avg cost: ₹${best.avgCost.toStringAsFixed(2)}
-CMP: ₹${best.cmp!.toStringAsFixed(2)}
-Unrealised gain: ${best.pnlStr}
-Held for: ${best.daysHeld} days
-Other holdings for comparison: $others
-
-Write a confident, direct response. Start with the conclusion. Show the position details. Compare briefly with other holdings. End with one optional follow-up offer. Use plain text only, no markdown.''';
+        
+        final buf = StringBuffer();
+        buf.writeln('DRAFT: «${best.symbol}» is your top-performing holding with a return of «${best.returnStr}».');
+        buf.writeln('You bought «${best.qty.toStringAsFixed(2)}» units at an average of ₹«${best.avgCost.toStringAsFixed(2)}» per unit.');
+        buf.writeln('Current market price is ₹«${best.cmp?.toStringAsFixed(2) ?? "N/A"}», bringing your invested ₹«${best.invested.toStringAsFixed(2)}» to a current value of ₹«${best.currentValue?.toStringAsFixed(2) ?? "N/A"}».');
+        buf.writeln('Unrealised P&L stands at «${best.pnlStr}» over «${best.daysHeld}» days of holding.');
+        
+        if (snap.holdings.length > 1) {
+          final others = snap.holdings.where((h) => h.symbol != best.symbol && h.hasPriceData).toList();
+          if (others.isNotEmpty) {
+            final secondBest = others.reduce((a, b) => (a.returnPct ?? double.negativeInfinity) > (b.returnPct ?? double.negativeInfinity) ? a : b);
+            buf.writeln('For context, the next best is ${secondBest.symbol} at ${secondBest.returnStr}.');
+          }
+        }
+        return buf.toString();
 
       case QuestionIntent.worstPerformer:
-        if (!snap.hasPriceData) return _noPricePrompt(userMessage);
-        if (snap.worstByReturn == null) return _noDataPrompt(userMessage);
+        if (!snap.hasPriceData) return _noPriceDraft();
+        if (snap.worstByReturn == null) return _noDataDraft();
+        
         final worst = snap.worstByReturn!;
-        final others = snap.holdings
-            .where((h) => h.symbol != worst.symbol && h.hasPriceData)
-            .map((h) => '${h.symbol} ${h.returnStr}')
-            .join(', ');
-        return '''The user asked: "$userMessage"
-
-VERIFIED DATA:
-Worst performing holding: ${worst.symbol}
-Return: ${worst.returnStr}
-Qty: ${worst.qty.toStringAsFixed(0)} units
-Avg cost: ₹${worst.avgCost.toStringAsFixed(2)}
-CMP: ₹${worst.cmp!.toStringAsFixed(2)}
-Unrealised P&L: ${worst.pnlStr}
-Held for: ${worst.daysHeld} days
-Other holdings: $others
-Profitable holdings: ${snap.profitableCount} out of ${snap.holdings.length}
-
-Write a direct response. State the weakest holding first. Show the numbers. Give context about the rest of the portfolio. Plain text only.''';
+        
+        final buf = StringBuffer();
+        buf.writeln('DRAFT: «${worst.symbol}» is your weakest holding right now, standing at «${worst.returnStr}».');
+        buf.writeln('You bought «${worst.qty.toStringAsFixed(2)}» units at an average of ₹«${worst.avgCost.toStringAsFixed(2)}» per unit.');
+        buf.writeln('Current market price is ₹«${worst.cmp?.toStringAsFixed(2) ?? "N/A"}», bringing your invested ₹«${worst.invested.toStringAsFixed(2)}» to a current value of ₹«${worst.currentValue?.toStringAsFixed(2) ?? "N/A"}».');
+        buf.writeln('You are down «${worst.pnlStr}» over «${worst.daysHeld}» days of holding.');
+        return buf.toString();
 
       case QuestionIntent.absoluteProfit:
-        if (!snap.hasPriceData) return _noPricePrompt(userMessage);
-        if (snap.bestByAbsoluteProfit == null) return _noDataPrompt(userMessage);
-        final best = snap.bestByAbsoluteProfit!;
-        return '''The user asked: "$userMessage"
+        if (!snap.hasPriceData) return _noPriceDraft();
+        if (snap.bestByAbsoluteProfit == null) return _noDataDraft();
 
-VERIFIED DATA:
-Highest absolute rupee profit: ${best.symbol}
-Unrealised profit: ${best.pnlStr}
-Return percentage: ${best.returnStr}
-Qty: ${best.qty.toStringAsFixed(0)} units
-Avg cost: ₹${best.avgCost.toStringAsFixed(2)}
-CMP: ₹${best.cmp!.toStringAsFixed(2)}
-
-Note: highest rupee profit and highest percentage return may be different holdings.
-
-Write a direct response explaining the difference between absolute profit and percentage return if relevant. Plain text only.''';
+        final buf = StringBuffer();
+        buf.writeln('DRAFT: Your highest absolute profit generator is ${snap.bestByAbsoluteProfit!.symbol} with «${snap.bestByAbsoluteProfit!.pnlStr}».');
+        return buf.toString();
 
       case QuestionIntent.totalReturn:
-        return '''The user asked: "$userMessage"
-
-VERIFIED DATA:
-Total invested: ₹${snap.totalInvested.toStringAsFixed(0)}
-Total current value: ₹${snap.totalCurrentValue.toStringAsFixed(0)}
-Total unrealised P&L: ${snap.pnlStr} (${snap.returnStr})
-Profitable holdings: ${snap.profitableCount} out of ${snap.holdings.length}
-${snap.hasPriceData ? 'Live prices used.' : 'Note: some prices unavailable.'}
-
-Write a confident summary of portfolio performance. Show the key numbers. Mention which holdings are driving the gains. Plain text only.''';
+        final pnlWord = snap.totalPnL >= 0 ? 'in profit' : 'at a loss';
+        return 'DRAFT: Your portfolio is currently $pnlWord. '
+            'Total invested: ₹${snap.totalInvested.toStringAsFixed(2)}. '
+            'Current value: ₹${snap.totalCurrentValue.toStringAsFixed(2)}. '
+            'Overall P&L: ${snap.pnlStr} (${snap.returnStr}). '
+            '${snap.profitableCount} of ${snap.holdings.length} holdings are in profit.';
 
       case QuestionIntent.portfolioSummary:
-        final holdingsSummary = snap.holdings
-            .map((h) => h.hasPriceData
-                ? '${h.symbol}: ${h.returnStr} | P&L ${h.pnlStr} | weight ${h.weightStr}'
-                : '${h.symbol}: no live price')
-            .join('\n');
-        return '''The user asked: "$userMessage"
-
-VERIFIED DATA:
-$holdingsSummary
-
-Total invested: ₹${snap.totalInvested.toStringAsFixed(0)}
-Total value: ₹${snap.totalCurrentValue.toStringAsFixed(0)}
-Total P&L: ${snap.pnlStr} (${snap.returnStr})
-
-For the table, use this exact format:
-TABLE:
-Symbol|Invested|CMP|P&L|Return
-Then one row per holding with exact numbers above.
-END_TABLE
-
-Then add one sentence summary after the table. Plain text only, no markdown.''';
+        final buf = StringBuffer();
+        buf.writeln('CARD:Portfolio Health');
+        buf.writeln('Total Invested: ₹${snap.totalInvested.toStringAsFixed(2)}');
+        buf.writeln('Current Value: ₹${snap.totalCurrentValue.toStringAsFixed(2)}');
+        buf.writeln('Overall P&L: ${snap.pnlStr} (${snap.returnStr})');
+        buf.writeln('END_CARD\n');
+        buf.writeln('DRAFT: Here is your detailed breakdown across **${snap.holdings.length}** holdings.');
+        buf.writeln('• Total invested: **₹${snap.totalInvested.toStringAsFixed(2)}** → Current value: **₹${snap.totalCurrentValue.toStringAsFixed(2)}**');
+        buf.writeln('• Overall P&L: **${snap.pnlStr}** (**${snap.returnStr}**)');
+        buf.writeln('• **${snap.profitableCount}** of **${snap.holdings.length}** holdings are in profit.');
+        buf.writeln('\nTABLE:');
+        buf.writeln('Asset | Invested | Current | P&L | Return | Weight');
+        for (final h in snap.holdings) {
+          if (h.hasPriceData) {
+            buf.writeln('${h.symbol} | ₹${h.invested.toStringAsFixed(2)} | ₹${h.currentValue!.toStringAsFixed(2)} | ${h.pnlStr} | ${h.returnStr} | ${h.weightStr}');
+          } else {
+            buf.writeln('${h.symbol} | ₹${h.invested.toStringAsFixed(2)} | N/A | N/A | N/A | ${h.weightStr}');
+          }
+        }
+        buf.writeln('END_TABLE');
+        buf.writeln('\nCHART:donut');
+        for (final h in snap.holdings.where((h) => h.hasPriceData).take(5)) {
+            buf.writeln('${h.symbol} | ${h.portfolioWeight.toStringAsFixed(2)}%');
+        }
+        buf.writeln('END_CHART');
+        return buf.toString();
 
       case QuestionIntent.biggestPosition:
-        if (snap.largestByWeight == null) return _noDataPrompt(userMessage);
+        if (snap.largestByWeight == null) return _noDataDraft();
         final largest = snap.largestByWeight!;
-        final others = snap.holdings
-            .where((h) => h.symbol != largest.symbol)
-            .map((h) => '${h.symbol} ${h.weightStr}')
-            .join(', ');
-        return '''The user asked: "$userMessage"
-
-VERIFIED DATA:
-Largest position: ${largest.symbol}
-Capital allocated: ₹${largest.invested.toStringAsFixed(0)}
-Portfolio weight: ${largest.weightStr}
-Other positions: $others
-
-Write a direct response. State the largest position and its weight. Compare with others. Plain text only.''';
+        return 'CARD:Largest Holding\n'
+            'Your largest position is ${largest.symbol} '
+            'with ₹${largest.invested.toStringAsFixed(2)} invested, '
+            'making up ${largest.weightStr} of your portfolio.\n'
+            'END_CARD\n'
+            'DRAFT: ${largest.symbol} is your largest allocation.';
 
       case QuestionIntent.concentration:
-        if (snap.largestByWeight == null) return _noDataPrompt(userMessage);
+        if (snap.largestByWeight == null) return _noDataDraft();
         final largest = snap.largestByWeight!;
         final isConcentrated = largest.portfolioWeight > 30;
-        return '''The user asked: "$userMessage"
-
-VERIFIED DATA:
-Largest single holding: ${largest.symbol} at ${largest.weightStr} of portfolio
-Total holdings: ${snap.holdings.length}
-Is concentrated (>30% in one stock): $isConcentrated
-
-Write a factual analysis of concentration risk. If concentrated, mention it clearly but without alarm. State the facts. The decision is theirs. Plain text only.''';
+        final buf = StringBuffer();
+        if (isConcentrated) {
+            buf.writeln('WARNING:\nYour portfolio is highly concentrated in ${largest.symbol} (${largest.weightStr}). This increases risk if the stock underperforms.\nEND_WARNING\n');
+        }
+        buf.writeln('DRAFT: Your largest holding is ${largest.symbol} at «${largest.weightStr}» of total portfolio value. '
+            '${isConcentrated ? "This is considered concentrated since it exceeds 30%." : "Your portfolio is reasonably spread."}');
+        buf.writeln('\nCHART:donut');
+        for (final h in snap.holdings.where((h) => h.hasPriceData).take(5)) {
+            buf.writeln('${h.symbol} | ${h.portfolioWeight.toStringAsFixed(2)}%');
+        }
+        buf.writeln('END_CHART');
+        return buf.toString();
 
       case QuestionIntent.diversification:
         final allWeights = snap.holdings
-            .map((h) => '${h.symbol}: ${h.weightStr}')
+            .map((h) => '${h.symbol} ${h.weightStr}')
             .join(', ');
-        return '''The user asked: "$userMessage"
-
-VERIFIED DATA:
-Number of holdings: ${snap.holdings.length}
-Allocation breakdown: $allWeights
-
-Write a brief diversification analysis. Mention number of holdings and how spread the capital is. Plain text only.''';
+        return 'DRAFT: You hold ${snap.holdings.length} positions. '
+            'Allocation: $allWeights.';
 
       case QuestionIntent.charges:
-        return '''The user asked: "$userMessage"
+        final pctOfInvested = snap.totalInvested > 0
+            ? (snap.totalCharges / snap.totalInvested * 100).toStringAsFixed(2)
+            : '0';
+        final buf = StringBuffer();
+        buf.writeln('DRAFT: Across «${snap.totalTrades}» trades since ${snap.firstTradeDate}, you paid **₹${snap.totalCharges.toStringAsFixed(2)}** in charges (**$pctOfInvested%** of invested value).');
+        buf.writeln('• Brokerage alone accounts for **₹${snap.totalBrokerage.toStringAsFixed(2)}**');
+        buf.writeln('• STT adds **₹${snap.totalStt.toStringAsFixed(2)}**');
+        buf.writeln('• GST adds **₹${snap.totalGst.toStringAsFixed(2)}**');
+        
+        buf.writeln('\nTABLE:');
+        buf.writeln('Category | Amount Paid');
+        buf.writeln('Brokerage | ₹${snap.totalBrokerage.toStringAsFixed(2)}');
+        buf.writeln('STT | ₹${snap.totalStt.toStringAsFixed(2)}');
+        buf.writeln('GST | ₹${snap.totalGst.toStringAsFixed(2)}');
+        buf.writeln('Other | ₹${snap.totalOtherLevies.toStringAsFixed(2)}');
+        buf.writeln('**Total** | **₹${snap.totalCharges.toStringAsFixed(2)}**');
+        buf.writeln('END_TABLE');
 
-VERIFIED DATA:
-Total charges paid: ₹${snap.totalCharges.toStringAsFixed(2)}
-Total trades executed: ${snap.totalTrades}
-Investing since: ${snap.firstTradeDate}
-
-Write a direct response with the exact charges figure. If charges are low relative to portfolio size, note that briefly. Plain text only.''';
+        // Only include charges for active holdings (qty > 0)
+        final activeSymbols = snap.holdings.map((h) => h.symbol.toUpperCase()).toSet();
+        
+        buf.writeln('\nTABLE:');
+        buf.writeln('Stock | Brokerage | STT | GST | Total');
+        final chargesBySymbol = <String, Map<String, double>>{};
+        for (final t in snap.trades) {
+          // Filter: only include trades for active holdings
+          if (!activeSymbols.contains(t.instrumentSymbol.toUpperCase())) continue;
+          
+          chargesBySymbol.putIfAbsent(t.instrumentSymbol, () => {'brokerage': 0, 'stt': 0, 'gst': 0, 'total': 0});
+          final b = t.brokerage ?? 0.0;
+          final s = t.stt ?? 0.0;
+          final g = t.gst ?? 0.0;
+          final total = t.charges ?? (b + s + g + (t.otherLevies ?? 0.0));
+          chargesBySymbol[t.instrumentSymbol]!['brokerage'] = (chargesBySymbol[t.instrumentSymbol]!['brokerage']! + b);
+          chargesBySymbol[t.instrumentSymbol]!['stt'] = (chargesBySymbol[t.instrumentSymbol]!['stt']! + s);
+          chargesBySymbol[t.instrumentSymbol]!['gst'] = (chargesBySymbol[t.instrumentSymbol]!['gst']! + g);
+          chargesBySymbol[t.instrumentSymbol]!['total'] = (chargesBySymbol[t.instrumentSymbol]!['total']! + total);
+        }
+        
+        // Sort by total charges descending
+        final sortedSymbols = chargesBySymbol.keys.toList()
+          ..sort((a, b) => chargesBySymbol[b]!['total']!.compareTo(chargesBySymbol[a]!['total']!));
+          
+        for (final sym in sortedSymbols) {
+          final c = chargesBySymbol[sym]!;
+          buf.writeln('$sym | ₹${c['brokerage']!.toStringAsFixed(2)} | ₹${c['stt']!.toStringAsFixed(2)} | ₹${c['gst']!.toStringAsFixed(2)} | ₹${c['total']!.toStringAsFixed(2)}');
+        }
+        buf.writeln('END_TABLE');
+        
+        return buf.toString();
 
       case QuestionIntent.tradeHistory:
-        return '''The user asked: "$userMessage"
-
-VERIFIED DATA:
-Total trades: ${snap.totalTrades}
-First trade: ${snap.firstTradeDate}
-Current holdings: ${snap.holdings.map((h) => h.symbol).join(', ')}
-
-Write a brief response about their trading history. Plain text only.''';
+        final buf = StringBuffer();
+        buf.writeln('DRAFT: You have executed ${snap.totalTrades} trades since ${snap.firstTradeDate}. Your recent holdings distribution:');
+        buf.writeln('\nTIMELINE:');
+        for (final h in snap.holdings) {
+          buf.writeln('${h.symbol} | ${h.qty.toStringAsFixed(2)} units | avg ₹${h.avgCost.toStringAsFixed(2)} | Held ${h.daysHeld} days');
+        }
+        buf.writeln('END_TIMELINE');
+        return buf.toString();
 
       case QuestionIntent.daysHeld:
         final daysInfo = snap.holdings
             .map((h) => '${h.symbol}: ${h.daysHeld} days')
             .join(', ');
-        return '''The user asked: "$userMessage"
+        return 'DRAFT: Holding durations (since first buy): $daysInfo.';
 
-VERIFIED DATA (days held = days since first buy):
-$daysInfo
+      case QuestionIntent.specificHolding:
+        return _buildSpecificHoldingDraft(userMessage, snap);
 
-Write a direct response with the holding durations. Plain text only.''';
+      case QuestionIntent.comparison:
+        return await buildComparisonDraft(userMessage, snap, externalSymbols: externalSymbols);
 
       case QuestionIntent.general:
-        // For general questions, return empty — let assistant_service
-        // use normal prompt building with portfolio context
         return '';
     }
   }
 
-  static String _noPricePrompt(String userMessage) =>
-      '''The user asked: "$userMessage"
-Live prices are currently unavailable. Tell the user you cannot give accurate performance data without current prices, and suggest they check back when online. Be brief and direct.''';
+  /// Finds the specific holding mentioned in the user's message and builds a draft.
+  static String _buildSpecificHoldingDraft(String userMessage, PortfolioSnapshot snap) {
+    final m = userMessage.toLowerCase();
+    HoldingAnalysis? match;
+    for (final h in snap.holdings) {
+      if (m.contains(h.symbol.toLowerCase())) {
+        match = h;
+        break;
+      }
+    }
+    if (match == null) return _noDataDraft();
 
-  static String _noDataPrompt(String userMessage) =>
-      '''The user asked: "$userMessage"
-No holdings data is available. Tell the user their portfolio appears empty and suggest importing trades first. Be brief.''';
+    final buf = StringBuffer();
+    buf.write('DRAFT: ');
+    // Find the full name from trades if available
+    final tradeName = snap.trades
+        .where((t) => t.instrumentSymbol.toUpperCase() == match!.symbol)
+        .map((t) => t.instrumentName)
+        .firstOrNull;
+    final displayName = tradeName ?? match.symbol;
+
+    buf.write('$displayName (${match.symbol}) ');
+    if (match.symbol.toUpperCase().contains('GOLD')) {
+      buf.write('is a Gold ETF tracking gold prices. It ');
+    } else if (match.symbol.toUpperCase().contains('SILVER')) {
+      buf.write('is a Silver ETF tracking silver prices. It ');
+    } else if (match.symbol.toUpperCase().contains('NIFTY')) {
+      buf.write('is an equity index fund tracking the Nifty 50. It ');
+    }
+    
+    if (match.hasPriceData) {
+      buf.write('is currently at ₹${match.cmp!.toStringAsFixed(2)}. ');
+      buf.write('You hold ${match.qty.toStringAsFixed(2)} units ');
+      buf.write('at an average cost of ₹${match.avgCost.toStringAsFixed(2)}. ');
+      buf.write('Current value: ₹${match.currentValue!.toStringAsFixed(2)}, ');
+      buf.write('invested: ₹${match.invested.toStringAsFixed(2)}. ');
+      buf.write('Unrealised P&L: ${match.pnlStr} (${match.returnStr}). ');
+      buf.write('[NOTE: The return shown is OVERALL since purchase, not today.] ');
+      buf.write('Held for ${match.daysHeld} days. ');
+      buf.write('Portfolio weight: ${match.weightStr}.');
+    } else {
+      buf.write('You hold ${match.qty.toStringAsFixed(2)} units ');
+      buf.write('with ₹${match.invested.toStringAsFixed(2)} invested. ');
+      buf.write('Live price is currently unavailable.');
+    }
+    return buf.toString();
+  }
+
+  /// Maps common names / aliases to actual portfolio symbols
+  static HoldingAnalysis? _resolveHolding(String alias, List<HoldingAnalysis> holdings) {
+    final a = alias.toLowerCase().trim();
+    
+    // Alias map: common name → possible symbol prefixes
+    const aliasMap = <String, List<String>>{
+      'gold': ['GOLDBEES', 'SETFGOLD', 'GOLD'],
+      'silver': ['SILVERIETF', 'SILVERBEES', 'SILVER'],
+      'nifty': ['NIFTYBEES', 'NIFTY'],
+      'yes bank': ['YESBANK'],
+      'yesbank': ['YESBANK'],
+      'bank': ['YESBANK', 'HDFCBANK', 'ICICIBANK', 'KOTAKBANK', 'SBIN', 'AXISBANK'],
+    };
+    
+    // 1. Exact symbol match
+    for (final h in holdings) {
+      if (h.symbol.toLowerCase() == a) return h;
+    }
+    
+    // 2. Alias map match
+    for (final entry in aliasMap.entries) {
+      if (a.contains(entry.key)) {
+        for (final prefix in entry.value) {
+          final match = holdings.where((h) => h.symbol.toUpperCase() == prefix).firstOrNull;
+          if (match != null) return match;
+        }
+      }
+    }
+    
+    // 3. Partial match: symbol contains the alias OR alias contains the symbol
+    for (final h in holdings) {
+      if (h.symbol.toLowerCase().contains(a) || a.contains(h.symbol.toLowerCase())) {
+        return h;
+      }
+    }
+    
+    return null;
+  }
+  /// Builds a comparison draft involving a TABLE and CHART:line blocks.
+  /// Supports 2 to 4 items and external Yahoo tickers.
+  static Future<String> buildComparisonDraft(String userMessage, PortfolioSnapshot snap, {List<String> externalSymbols = const []}) async {
+    if (!snap.hasPriceData && externalSymbols.isEmpty) return _noPriceDraft();
+    final m = userMessage.toLowerCase();
+    
+    final targets = <_CompareItem>[];
+    final seen = <String>{};
+    
+    // 1. Exact match from portfolio
+    for (final h in snap.holdings) {
+      if (m.contains(h.symbol.toLowerCase()) && !seen.contains(h.symbol)) {
+        targets.add(_CompareItem(
+          symbol: h.symbol, invested: h.invested, currentValue: h.currentValue, cmp: h.cmp,
+          qty: h.qty, avgCost: h.avgCost, pnlStr: h.pnlStr, returnStr: h.returnStr,
+          weightStr: h.weightStr, daysHeld: h.daysHeld, isExternal: false, yahooSymbolForChart: h.symbol
+        ));
+        seen.add(h.symbol);
+      }
+    }
+    
+    // 2. Alias resolution for portfolio
+    final candidateAliases = ['gold', 'silver', 'nifty', 'yes bank', 'yesbank', 'bank'];
+    for (final alias in candidateAliases) {
+      if (m.contains(alias)) {
+        final resolved = _resolveHolding(alias, snap.holdings);
+        if (resolved != null && !seen.contains(resolved.symbol)) {
+          targets.add(_CompareItem(
+            symbol: resolved.symbol, invested: resolved.invested, currentValue: resolved.currentValue, cmp: resolved.cmp,
+            qty: resolved.qty, avgCost: resolved.avgCost, pnlStr: resolved.pnlStr, returnStr: resolved.returnStr,
+            weightStr: resolved.weightStr, daysHeld: resolved.daysHeld, isExternal: false, yahooSymbolForChart: resolved.symbol
+          ));
+          seen.add(resolved.symbol);
+        }
+      }
+    }
+    
+    // 3. Clean external symbols
+    final cleanExternal = <String>[];
+    String resolveExtToAlias(String e) {
+      if (e == 'GC=F') return 'gold';
+      if (e == 'SI=F') return 'silver';
+      if (e == 'HG=F') return 'copper';
+      if (e == '^NSEI') return 'nifty';
+      if (e == '^NSEBANK') return 'bank';
+      return e.toLowerCase().replaceAll('.ns', '').replaceAll('=f', '');
+    }
+
+    for (var ext in externalSymbols) {
+       final raw = ext.replaceAll('.NS', '').replaceAll('.BO', '').replaceAll('=F', '').toUpperCase();
+       final alias = resolveExtToAlias(ext);
+       
+       bool alreadyResolved = false;
+       for (final t in targets) {
+           if (t.symbol.toUpperCase() == raw || t.symbol.toLowerCase().contains(alias)) {
+               alreadyResolved = true;
+               break;
+           }
+       }
+       
+       if (!seen.contains(raw) && !alreadyResolved) {
+          cleanExternal.add(ext);
+          seen.add(raw);
+       }
+    }
+    if (targets.length + cleanExternal.length < 2 && targets.length + cleanExternal.length > 0) {
+        return 'DRAFT: Please specify at least two assets to compare. You only mentioned one.';
+    }
+    if (targets.length + cleanExternal.length < 2) {
+      return 'DRAFT: Please specify at least two holdings or assets to compare.';
+    }
+
+    // 4. Fetch external data
+    for (final ext in cleanExternal.take(4)) { 
+       final quote = await YahooQuoteService.fetchQuote(ext);
+       if (quote != null) {
+          String shortName = quote.name;
+          if (shortName.length > 15) shortName = shortName.substring(0, 15);
+          final sign = quote.dayChangePct >= 0 ? '+' : '';
+          
+          targets.add(_CompareItem(
+             symbol: shortName,
+             invested: null, currentValue: null, cmp: quote.cmp, qty: null, avgCost: null,
+             pnlStr: 'N/A', returnStr: '$sign${quote.dayChangePct.toStringAsFixed(2)}% (1D)',
+             weightStr: 'N/A', daysHeld: null, isExternal: true, yahooSymbolForChart: ext
+          ));
+       }
+    }
+
+    final compareList = targets.take(4).toList();
+    if (compareList.length < 2) {
+       return 'DRAFT: I could not retrieve enough data for the requested assets to perform a comparison.';
+    }
+
+    final buf = StringBuffer();
+    final symbolList = compareList.map((h) => h.symbol).join(' and ');
+    buf.writeln('DRAFT: Comparing $symbolList:');
+    
+    final portfolioItems = compareList.where((c) => !c.isExternal).toList();
+    if (portfolioItems.isNotEmpty) {
+       final best = [...portfolioItems]..sort((a,b) {
+           final aRet = a.returnStr == 'N/A' ? -999.0 : double.tryParse(a.returnStr.replaceAll('%', '').replaceAll('+','')) ?? -999.0;
+           final bRet = b.returnStr == 'N/A' ? -999.0 : double.tryParse(b.returnStr.replaceAll('%', '').replaceAll('+','')) ?? -999.0;
+           return bRet.compareTo(aRet);
+       });
+       buf.writeln('• **${best.first.symbol}** leads your owned portfolio with an overall return of **${best.first.returnStr}** and P&L of **${best.first.pnlStr}**.');
+    }
+    final externalItems = compareList.where((c) => c.isExternal).toList();
+    if (externalItems.isNotEmpty) {
+       for (final ext in externalItems) {
+           buf.writeln('• **${ext.symbol}** is currently trading at **₹${ext.cmp?.toStringAsFixed(2) ?? "N/A"}** (Day Change: **${ext.returnStr}**).');
+       }
+    }
+
+    buf.writeln('\nTABLE:');
+    final headerCells = ['Metric', ...compareList.map((h) => h.symbol)];
+    buf.writeln(headerCells.join(' | '));
+    
+    String formatNum(double? val, {String prefix = ''}) => val == null ? '–' : '$prefix${val.toStringAsFixed(2)}';
+    String formatStr(String val) => val == 'N/A' ? '–' : val;
+
+    buf.writeln(['Invested', ...compareList.map((h) => formatNum(h.invested, prefix: '₹'))].join(' | '));
+    buf.writeln(['Current Value', ...compareList.map((h) => formatNum(h.currentValue, prefix: '₹'))].join(' | '));
+    buf.writeln(['CMP', ...compareList.map((h) => formatNum(h.cmp, prefix: '₹'))].join(' | '));
+    buf.writeln(['Qty', ...compareList.map((h) => formatNum(h.qty))].join(' | '));
+    buf.writeln(['Avg Cost', ...compareList.map((h) => formatNum(h.avgCost, prefix: '₹'))].join(' | '));
+    buf.writeln(['P&L', ...compareList.map((h) => formatStr(h.pnlStr))].join(' | '));
+    buf.writeln(['Return', ...compareList.map((h) => formatStr(h.returnStr))].join(' | '));
+    buf.writeln(['Days Held', ...compareList.map((h) => h.daysHeld?.toString() ?? '–')].join(' | '));
+    buf.writeln('END_TABLE');
+    
+    final chartSymbols = compareList.map((h) => '${h.yahooSymbolForChart}::${h.symbol.replaceAll(',', '')}').join(',');
+    
+    int computedScenario = 3;
+    if (portfolioItems.isEmpty && externalItems.isNotEmpty) {
+      computedScenario = 1;
+    } else if (portfolioItems.isNotEmpty && externalItems.isNotEmpty) {
+      computedScenario = 2;
+    }
+
+    if (computedScenario == 1) {
+        // Scenario 1: All external. 4 line charts.
+        buf.writeln('\nCHART:line\n$chartSymbols|max|All Time Performance\nEND_CHART');
+        buf.writeln('\nCHART:line\n$chartSymbols|1y|Last 1 Year\nEND_CHART');
+        buf.writeln('\nCHART:line\n$chartSymbols|30d|Last 30 Days\nEND_CHART');
+        buf.writeln('\nCHART:line\n$chartSymbols|1d|Today\'s Movement\nEND_CHART');
+    } else {
+        // Scenario 2 / 3: Mixed or All Portfolio
+        int minDays = 30;
+        if (portfolioItems.isNotEmpty) {
+           minDays = portfolioItems.map((h) => h.daysHeld ?? 30).reduce((a, b) => a < b ? a : b);
+        }
+        if (minDays < 7) minDays = 7; 
+        if (minDays > 365) minDays = 365;
+        buf.writeln('\nCHART:line\n$chartSymbols|${minDays}d|Owned Window ($minDays Days)\nEND_CHART');
+    }
+
+    return buf.toString();
+  }
+
+    static String _noPriceDraft() =>
+      'DRAFT: Live market prices are not available right now. '
+      'I can still show your invested amounts and quantities, '
+      'but current P&L and return percentages require a live connection.';
+
+  static String _noDataDraft() =>
+      'DRAFT: Portfolio data is not available yet. '
+      'If you have imported trades, please wait a moment and ask again. '
+      'The data may still be loading from the database.';
 
   static String _fmt(DateTime dt, String pattern) =>
       DateFormat(pattern).format(dt);

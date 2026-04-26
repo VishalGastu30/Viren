@@ -46,8 +46,8 @@ class SymbolInfo {
     required this.isEtf,
   });
 
-  /// One-line description for Qwen context
-  String get qwenContext =>
+  /// One-line description for Groq context
+  String get groqContext =>
       '$symbol ($description). Key drivers: ${macroDrIvers.take(3).join(', ')}.';
 }
 
@@ -346,11 +346,11 @@ class SymbolClassifier {
     return patterns.any((p) => symbol.contains(p));
   }
 
-  /// Build Qwen context string for an entire portfolio
-  static String buildPortfolioQwenContext(List<Holding> holdings) {
+  /// Build Groq context string for an entire portfolio
+  static String buildPortfolioGroqContext(List<Holding> holdings) {
     return holdings.map((h) {
       final info = classify(h.instrumentSymbol);
-      return '${info.qwenContext} '
+      return '${info.groqContext} '
           'Position: ${h.totalQuantity.toStringAsFixed(0)} units, '
           'avg cost ₹${h.averagePrice.toStringAsFixed(2)}, '
           'invested ₹${h.investedValue.toStringAsFixed(0)}';

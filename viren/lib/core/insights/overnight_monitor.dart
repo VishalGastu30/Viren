@@ -1,5 +1,5 @@
+import '../../core/ai/groq_service.dart';
 import 'dart:convert';
-import 'package:flutter/services.dart';
 import 'package:drift/drift.dart';
 import 'package:workmanager/workmanager.dart';
 import '../database/app_database.dart';
@@ -102,7 +102,7 @@ class OvernightMonitor {
     } catch (_) {}
 
     data['holdings_context'] =
-        SymbolClassifier.buildPortfolioQwenContext(holdings);
+        SymbolClassifier.buildPortfolioGroqContext(holdings);
     data['fetched_at'] = DateTime.now().toIso8601String();
 
     return data;
@@ -215,11 +215,6 @@ class OvernightMonitor {
         return;
       }
 
-      // Get model path
-      const channel = MethodChannel('com.viren.viren/pdf_crypto');
-      final basePath = await channel.invokeMethod<String>('getModelPath');
-      final modelPath =
-          '$basePath/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv1280.task';
 
       // Build Qwen prompt for morning briefing
       final newsItems = (overnightData['news'] as List?)
@@ -256,10 +251,11 @@ Mention the most relevant overnight event for their specific holdings.
 If there is a buying opportunity or risk, say it clearly but without alarm.
 Plain text only. 2-3 sentences maximum.''';
 
-      final response = await channel.invokeMethod<String>('chat', {
-        'prompt': prompt,
-        'modelPath': modelPath,
-      });
+      final response = await GroqService.chat(
+        prompt: prompt,
+        systemPrompt: "You are an expert investment advisor.",
+        model: GroqService.heavyModel,
+      );
 
       if (response == null || response.trim().isEmpty) return;
 

@@ -14,13 +14,9 @@ import com.tom_roush.pdfbox.text.PDFTextStripper
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
-import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import org.json.JSONObject
 import java.io.File
@@ -30,16 +26,6 @@ class MainActivity : FlutterFragmentActivity() {
 
     private val CHANNEL = "com.viren.viren/pdf_crypto"
     private val FOREGROUND_CHANNEL = "com.viren.viren/foreground"
-
-    private var llmInference: LlmInference? = null
-    private var llmModelPath: String? = null
-    private val llmMutex = Mutex()
-
-    // Timestamp of last completed inference — used for cooldown
-    private var lastInferenceEndMs: Long = 0L
-
-    // Minimum gap between inferences to let the CPU breathe
-    private val INFERENCE_COOLDOWN_MS = 1500L
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -102,81 +88,6 @@ class MainActivity : FlutterFragmentActivity() {
                     }
                 }
 
-                "getModelPath" -> {
-                    result.success(applicationContext.filesDir.absolutePath)
-                }
-
-                "extractAiTrades" -> {
-                    val promptText = call.argument<String>("promptText")
-                    val modelPath = call.argument<String>("modelPath")
-                    if (promptText == null || modelPath == null) {
-                        result.error("INVALID_ARGS", "Missing promptText or modelPath.", null)
-                        return@setMethodCallHandler
-                    }
-                    if (!File(modelPath).exists()) {
-                        result.error("MODEL_MISSING", "AI model not downloaded yet.", null)
-                        return@setMethodCallHandler
-                    }
-                    CoroutineScope(Dispatchers.IO).launch {
-                        try {
-                            val inference = getOrCreateLlmInference(modelPath)
-                            val response = inference.generateResponse(promptText)
-                            lastInferenceEndMs = System.currentTimeMillis()
-                            CoroutineScope(Dispatchers.Main).launch { result.success(response) }
-                        } catch (e: Exception) {
-                            android.util.Log.e("VirenLLM", "extractAiTrades error — resetting instance", e)
-                            resetLlmInstance()
-                            CoroutineScope(Dispatchers.Main).launch {
-                                result.error("AI_ERROR", "MediaPipe inference failed.", e.message)
-                            }
-                        }
-                    }
-                }
-
-                "chat" -> {
-                    val prompt = call.argument<String>("prompt")
-                    val modelPath = call.argument<String>("modelPath")
-                    android.util.Log.d("VirenLLM", "Received modelPath: $modelPath")
-
-                    if (prompt == null || modelPath == null) {
-                        result.error("INVALID_ARGS", "Missing prompt or modelPath.", null)
-                        return@setMethodCallHandler
-                    }
-                    val llmFile = File(modelPath)
-                    android.util.Log.d("VirenLLM", "File exists: ${llmFile.exists()}, size: ${llmFile.length()}")
-                    if (!llmFile.exists()) {
-                        result.error("MODEL_MISSING", "AI model not downloaded yet.", null)
-                        return@setMethodCallHandler
-                    }
-
-                    CoroutineScope(Dispatchers.IO).launch {
-                        try {
-                            // Enforce cooldown to prevent thermal crash buildup
-                            val msSinceLast = System.currentTimeMillis() - lastInferenceEndMs
-                            if (lastInferenceEndMs > 0 && msSinceLast < INFERENCE_COOLDOWN_MS) {
-                                val waitMs = INFERENCE_COOLDOWN_MS - msSinceLast
-                                android.util.Log.d("VirenLLM", "Thermal cooldown: waiting ${waitMs}ms")
-                                delay(waitMs)
-                            }
-
-                            val inference = getOrCreateLlmInference(modelPath)
-                            val response = inference.generateResponse(prompt) ?: "I could not process that."
-                            lastInferenceEndMs = System.currentTimeMillis()
-
-                            CoroutineScope(Dispatchers.Main).launch { result.success(response) }
-                        } catch (e: Exception) {
-                            android.util.Log.e("VirenLLM", "Chat error — resetting LLM instance", e)
-                            resetLlmInstance()
-                            CoroutineScope(Dispatchers.Main).launch {
-                                result.error(
-                                    "CHAT_ERROR",
-                                    "The model hit a limit and has been reset. Please try again.",
-                                    e.message
-                                )
-                            }
-                        }
-                    }
-                }
 
                 else -> result.notImplemented()
             }
@@ -206,53 +117,6 @@ class MainActivity : FlutterFragmentActivity() {
         }
     }
 
-    private suspend fun getOrCreateLlmInference(modelPath: String): LlmInference {
-        return llmMutex.withLock {
-            if (llmInference != null && llmModelPath == modelPath) {
-                android.util.Log.d("VirenLLM", "Reusing existing LlmInference.")
-                llmInference!!
-            } else {
-                if (llmInference != null) {
-                    android.util.Log.d("VirenLLM", "Rebuilding LlmInference.")
-                    try { llmInference!!.close() } catch (_: Exception) {}
-                    llmInference = null
-                    llmModelPath = null
-                }
-
-                android.util.Log.d("VirenLLM", "Loading model from: $modelPath")
-
-                val options = LlmInference.LlmInferenceOptions.builder()
-                    .setModelPath(modelPath)
-                    // 512 tokens: enough for all Viren responses (system prompt caps at ~150 words),
-                    // halves the native KV cache vs 1024, significantly cuts thermal + memory load.
-                    // reverted back to 1024 as 512 was not enough
-                    .setMaxTokens(1024)
-                    .setPreferredBackend(LlmInference.Backend.CPU)
-                    .build()
-
-                val instance = LlmInference.createFromOptions(applicationContext, options)
-                llmInference = instance
-                llmModelPath = modelPath
-                android.util.Log.d("VirenLLM", "Model loaded. CPU, maxTokens=512.")
-                instance
-            }
-        }
-    }
-
-    /**
-     * Destroys the current LlmInference instance so the next
-     * request gets a clean rebuild. Called after any inference crash.
-     */
-    private fun resetLlmInstance() {
-        CoroutineScope(Dispatchers.IO).launch {
-            llmMutex.withLock {
-                try { llmInference?.close() } catch (_: Exception) {}
-                llmInference = null
-                llmModelPath = null
-                android.util.Log.d("VirenLLM", "LlmInference instance reset after crash.")
-            }
-        }
-    }
 
     private suspend fun performOcrOnPdf(pdfFile: File, password: String): String {
         val tempFile = File(applicationContext.cacheDir, "temp_decrypted_${System.currentTimeMillis()}.pdf")

@@ -71,6 +71,20 @@ class ThinkingPhrases {
     'checking current valuations...',
   ];
 
+  static const _news = [
+    'checking latest news...',
+    'reading the full article...',
+    'scanning the headlines...',
+    'looking up current events...',
+    'checking what the world is doing...',
+  ];
+
+  static const _live = [
+    'checking gold spot price...',
+    'looking at global markets...',
+    'getting live numbers...',
+  ];
+
   static const _summary = [
     'putting together a summary...',
     'building the full picture...',
@@ -80,16 +94,15 @@ class ThinkingPhrases {
   ];
 
   static const _general = [
-    'thinking...',
-    'reading your data...',
-    'working it out...',
-    'one moment...',
-    'looking into it...',
-    'connecting the dots...',
-    'parsing the context...',
-    'checking the numbers...',
-    'on it...',
-    'processing...',
+    'verifying 0-unit holdings...',
+    'checking live portfolio context...',
+    'validating asset snapshot...',
+    'checking multi-intent routing...',
+    'building analytical drafts...',
+    'assembling internal data markers...',
+    'checking for cross-asset confusion...',
+    'resolving portfolio math...',
+    'processing context...',
   ];
 
   // ── Keyword detection ─────────────────────────────────────────────────────
@@ -115,6 +128,10 @@ class ThinkingPhrases {
       pool = _holdings;
     } else if (_containsAny(m, ['summary', 'overview', 'total', 'all', 'everything', 'portfolio'])) {
       pool = _summary;
+    } else if (_containsAny(m, ['news', 'why', 'happened', 'reason', 'article'])) {
+      pool = _news;
+    } else if (_containsAny(m, ['live', 'spot', 'global'])) {
+      pool = _live;
     } else {
       pool = _general;
     }

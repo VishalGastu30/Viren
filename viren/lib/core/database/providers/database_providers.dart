@@ -31,7 +31,6 @@ import '../../intelligence/stats/portfolio_snapshot_service.dart';
 import '../../intelligence/ai/ai_provider.dart';
 import '../../intelligence/ai/data_sanitizer.dart';
 import '../../intelligence/ai/ai_guardrails.dart';
-import '../../intelligence/ai/ollama_ai_provider.dart';
 
 // ── Sync ─────────────────────────────────────────────────────────────────────
 import '../../sync/encrypted_backup_service.dart';
@@ -203,10 +202,7 @@ final portfolioSnapshotServiceProvider = Provider<PortfolioSnapshotService>((ref
 
 // ── AI ────────────────────────────────────────────────────────────────────────
 
-/// AI provider — defaults to OllamaAiProvider for local offline inference.
-final aiProviderProvider = Provider<AiProvider>((ref) {
-  return OllamaAiProvider();
-});
+
 
 final dataSanitizerProvider = Provider<DataSanitizer>((ref) {
   return DataSanitizer();

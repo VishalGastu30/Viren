@@ -4,8 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/database/providers/database_providers.dart';
 import '../../core/theme/design_tokens.dart';
-import '../../core/ai/model_download_service.dart';
-import '../../core/ai/model_setup_screen.dart';
+
 import '../../core/database/app_database.dart' hide PortfolioSnapshot;
 import 'chat_message.dart';
 import 'conversation_repository.dart';
@@ -59,9 +58,7 @@ class AssistantScreen extends ConsumerStatefulWidget {
 
 class AssistantScreenState extends ConsumerState<AssistantScreen>
     with TickerProviderStateMixin {
-  bool _isModelReady = false;
-  bool _isCheckingModel = true; // ← NEW FLAG
-  bool _showSlideToUnlock = false;
+  bool _isContextReady = false;
 
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
@@ -100,7 +97,7 @@ class AssistantScreenState extends ConsumerState<AssistantScreen>
     _contentScale = Tween<double>(begin: 1.0, end: 0.92).animate(
       CurvedAnimation(parent: _drawerController, curve: Curves.easeOutCubic),
     );
-    _checkModelReady();
+
     _initFirstConversation();
   }
 
@@ -121,7 +118,11 @@ class AssistantScreenState extends ConsumerState<AssistantScreen>
       ref.read(activeConversationIdProvider.notifier).set(convs.first.id);
       _syncMessagesFromDb(convs.first.id);
     }
-    _loadPortfolioContext();
+    // Small delay to let AppDatabase complete its migration/open sequence.
+    // The holdingsStreamProvider listener in build() will also trigger
+    // a context load as soon as data is available.
+    await Future.delayed(const Duration(milliseconds: 300));
+    if (mounted) _loadPortfolioContext();
   }
 
   Future<void> _syncMessagesFromDb(int convId) async {
@@ -142,69 +143,78 @@ class AssistantScreenState extends ConsumerState<AssistantScreen>
     }
   }
 
-  Future<void> _checkModelReady() async {
-    setState(() => _isCheckingModel = true);
-    final ready = await ModelDownloadService.isModelReady();
-    if (!mounted) return;
-    if (ready) {
-      final fileExists = await ModelDownloadService.modelFileExists();
-      if (!fileExists) {
-        await ModelDownloadService.resetModelReady();
-        setState(() {
-          _isModelReady = false;
-          _isCheckingModel = false;
-          _showSlideToUnlock = false;
-        });
+
+
+  Future<void> _loadPortfolioContext() async {
+    // Guard: don't run concurrent loads
+    if (_isLoading) return;
+    
+    // Read ALL providers BEF0RE any async gap.
+    final db = ref.read(appDatabaseProvider);
+    final memoryService = ref.read(memoryServiceProvider);
+
+    try {
+      // Step 1: Quick DB check — is there any data?
+      // If holdings table is empty (DB not ready yet or genuinely empty),
+      // the holdingsStreamProvider listener will re-trigger us when data arrives.
+      final holdingsCheck = await db.select(db.holdings).get();
+      if (!mounted) return;
+      
+      final activeHoldings = holdingsCheck
+          .where((h) => h.totalQuantity > 0.001)
+          .toList();
+      
+      // If no holdings yet, set empty state and wait for the stream listener
+      if (activeHoldings.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _snapshot = null;
+            _portfolioContext = '';
+            _isContextReady = true; // ← allow general questions even without portfolio
+          });
+        }
         return;
       }
-      setState(() {
-        _isModelReady = true;
-        _isCheckingModel = false;
-      });
 
-      // Flush any message that arrived before model was ready
-      if (_pendingExternalMessage != null && _portfolioContext.isNotEmpty) {
+      // Step 2: Build snapshot — now that we KNOW holdings exist
+      final engine = PortfolioAnalyticsEngine(db);
+      final snap = await engine.buildSnapshot();
+      if (!mounted) return;
+
+      // Step 3: Build context string
+      final builder = PortfolioContextBuilder(db);
+      final ctx = builder.buildFromSnapshot(snap);
+      if (!mounted) return;
+
+      // Step 4: Load memory context
+      final memoryCtx = await memoryService.getMemoryContext();
+      if (!mounted) return;
+
+      // Only update if we actually got data (prevents empty overwrites)
+      if (snap.holdings.isNotEmpty) {
+        setState(() {
+          _snapshot = snap;
+          _portfolioContext = ctx;
+          _memoryContext = memoryCtx;
+          _isContextReady = true;
+        });
+      }
+
+      // Flush any pending external message
+      if (_pendingExternalMessage != null && _isContextReady) {
         final msg = _pendingExternalMessage!;
         _pendingExternalMessage = null;
         Future.delayed(const Duration(milliseconds: 100), () {
           if (mounted) _sendMessage(msg);
         });
       }
-    } else {
-      setState(() => _isCheckingModel = false);
-    }
-  }
-
-  Future<void> _loadPortfolioContext() async {
-    // Read ALL providers before any async gap.
-    // After an await, the widget may be deactivated and ref is unsafe.
-    final db = ref.read(appDatabaseProvider);
-    final memoryService = ref.read(memoryServiceProvider);
-
-    final engine = PortfolioAnalyticsEngine(db);
-    final snap = await engine.buildSnapshot();
-    if (!mounted) return;
-
-    final builder = PortfolioContextBuilder(db);
-    final ctx = await builder.build();
-    if (!mounted) return;
-
-    final memoryCtx = await memoryService.getMemoryContext();
-    if (!mounted) return;
-
-    setState(() {
-      _snapshot = snap;
-      _portfolioContext = ctx;
-      _memoryContext = memoryCtx;
-    });
-
-    // If a message arrived before context was ready, send it now
-    if (_pendingExternalMessage != null && _isModelReady) {
-      final msg = _pendingExternalMessage!;
-      _pendingExternalMessage = null;
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (mounted) _sendMessage(msg);
-      });
+    } catch (e) {
+      // DB error — set context ready with empty state so general questions work
+      if (mounted) {
+        setState(() {
+          _isContextReady = true;
+        });
+      }
     }
   }
 
@@ -216,7 +226,7 @@ class AssistantScreenState extends ConsumerState<AssistantScreen>
     if (message.trim().isEmpty) return;
 
     // If portfolio context isn't ready yet, store and wait.
-    if (_portfolioContext.isEmpty || !_isModelReady) {
+    if (!_isContextReady) {
       _pendingExternalMessage = message;
       return;
     }
@@ -325,7 +335,16 @@ class AssistantScreenState extends ConsumerState<AssistantScreen>
   }
 
   Future<void> _sendMessage(String text) async {
-    if (text.trim().isEmpty || _isLoading || !_isModelReady) return;
+    if (text.trim().isEmpty || _isLoading || !_isContextReady) return;
+
+    // RACE CONDITION GUARD: If context is marked ready but snapshot is empty,
+    // it means DB was not ready on first load. Refresh now before proceeding.
+    // The holdingsStreamProvider listener should have already triggered a reload.
+    if ((_snapshot == null || _snapshot!.isEmpty) && 
+        _portfolioContext.isNotEmpty) {
+      await _loadPortfolioContext();
+      if (!mounted) return;
+    }
 
     final repo = ref.read(conversationRepositoryProvider);
     int convId;
@@ -389,25 +408,39 @@ class AssistantScreenState extends ConsumerState<AssistantScreen>
       await repo.addMessage(conversationId: convId, text: response, isUser: false);
 
       final words = response.split(' ');
-      String accumulated = '';
-      for (final word in words) {
-        await Future.delayed(const Duration(milliseconds: 35));
-        accumulated += (accumulated.isEmpty ? '' : ' ') + word;
+      
+      // Short canned responses (e.g., error messages, empty portfolio guards)
+      // don't need word-by-word streaming — display them instantly to avoid flashing.
+      if (words.length <= 15) {
         if (mounted) {
           setState(() {
             _messages[placeholderIndex] =
-                placeholderMsg.copyWith(text: accumulated, isStreaming: true);
+                placeholderMsg.copyWith(text: response, isStreaming: false);
+            _isLoading = false;
           });
-          _scrollToBottom();
         }
-      }
+      } else {
+        // Full word-by-word streaming for rich LLM responses
+        String accumulated = '';
+        for (final word in words) {
+          await Future.delayed(const Duration(milliseconds: 35));
+          accumulated += (accumulated.isEmpty ? '' : ' ') + word;
+          if (mounted) {
+            setState(() {
+              _messages[placeholderIndex] =
+                  placeholderMsg.copyWith(text: accumulated, isStreaming: true);
+            });
+            _scrollToBottom();
+          }
+        }
 
-      if (mounted) {
-        setState(() {
-          _messages[placeholderIndex] =
-              placeholderMsg.copyWith(text: response, isStreaming: false);
-          _isLoading = false;
-        });
+        if (mounted) {
+          setState(() {
+            _messages[placeholderIndex] =
+                placeholderMsg.copyWith(text: response, isStreaming: false);
+            _isLoading = false;
+          });
+        }
       }
     } catch (e) {
       _thinkingTimer?.cancel();
@@ -452,14 +485,29 @@ class AssistantScreenState extends ConsumerState<AssistantScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        _buildMainUI(),
-        if (!_isCheckingModel && !_isModelReady && !_showSlideToUnlock) 
-          _buildSetupOverlay(),
-        if (_showSlideToUnlock) _buildSlideToUnlock(),
-      ],
+    // Watch the holdings stream. When holdings arrive or change,
+    // refresh the portfolio context so _snapshot stays current.
+    // This also fixes the race condition on first load:
+    // instead of querying DB blindly at startup, we wait until
+    // the stream confirms data is available.
+    ref.listen(
+      holdingsStreamProvider,
+      (previous, next) {
+        next.whenData((holdings) {
+          // Reload context if:
+          //   a) First load: snapshot is null/empty but holdings exist
+          //   b) After import: holdings count changed (new trades imported)
+          final prevCount = _snapshot?.holdings.length ?? 0;
+          final newCount = holdings.where((h) => h.totalQuantity > 0.001).length;
+          
+          if (holdings.isNotEmpty && (prevCount == 0 || newCount != prevCount)) {
+            _loadPortfolioContext();
+          }
+        });
+      },
     );
+
+    return _buildMainUI();
   }
 
   Widget _buildMainUI() {
@@ -787,8 +835,9 @@ class AssistantScreenState extends ConsumerState<AssistantScreen>
   Widget _buildEmptyStateWithSuggestions() {
     final suggestions = [
       "Which holding is performing best?",
-      "What's my total return so far?",
+      "Give me a full portfolio breakdown",
       "How much have I paid in charges?",
+      "Compare my gold and silver holdings",
     ];
 
     return LayoutBuilder(
@@ -905,12 +954,10 @@ class AssistantScreenState extends ConsumerState<AssistantScreen>
                 style: Theme.of(context).textTheme.bodyMedium,
                 maxLines: 5,
                 minLines: 1,
-                enabled: _isModelReady,
+                enabled: true,
                 textCapitalization: TextCapitalization.sentences,
                 decoration: InputDecoration(
-                  hintText: _isModelReady
-                      ? 'Ask Viren anything...'
-                      : 'Setting up Viren...',
+                  hintText: 'Ask Viren anything...',
                   hintStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: DesignTokens.textMediumContrast
                             .withValues(alpha: 0.4),
@@ -924,7 +971,7 @@ class AssistantScreenState extends ConsumerState<AssistantScreen>
           ),
           const SizedBox(width: 10),
           GestureDetector(
-            onTap: _isModelReady && !_isLoading
+            onTap: !_isLoading
                 ? () => _sendMessage(_inputController.text)
                 : null,
             child: AnimatedContainer(
@@ -932,11 +979,11 @@ class AssistantScreenState extends ConsumerState<AssistantScreen>
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                color: (!_isModelReady || _isLoading)
+                color: _isLoading
                     ? DesignTokens.obsidianTeal.withValues(alpha: 0.3)
                     : DesignTokens.obsidianTeal,
                 shape: BoxShape.circle,
-                boxShadow: _isModelReady && !_isLoading
+                boxShadow: !_isLoading
                     ? [
                         BoxShadow(
                           color: DesignTokens.obsidianTeal
@@ -961,86 +1008,7 @@ class AssistantScreenState extends ConsumerState<AssistantScreen>
     );
   }
 
-  Widget _buildSetupOverlay() {
-    return Positioned.fill(
-      child: PopScope(
-        canPop: false,
-        child: Material(
-          color: DesignTokens.graphiteBase,
-          child: ModelSetupScreen(
-            onComplete: () {
-              if (mounted) setState(() => _showSlideToUnlock = true);
-            },
-          ),
-        ),
-      ),
-    );
-  }
 
-  Widget _buildSlideToUnlock() {
-    return Positioned.fill(
-      child: PopScope(
-        canPop: false,
-        child: Material(
-          color: DesignTokens.graphiteBase,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  color: DesignTokens.obsidianTeal.withValues(alpha: 0.12),
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: DesignTokens.obsidianTeal.withValues(alpha: 0.3),
-                    width: 1.5,
-                  ),
-                ),
-                child: const Icon(Icons.bolt_rounded,
-                    color: DesignTokens.obsidianTeal, size: 36),
-              ),
-              const SizedBox(height: 28),
-              Text('Viren is ready',
-                  style: TextStyle(
-                    color: DesignTokens.textHighContrast,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w300,
-                    letterSpacing: 2,
-                  )),
-              const SizedBox(height: 8),
-              Text('Your portfolio context is loaded',
-                  style: TextStyle(
-                      color: DesignTokens.textMediumContrast, fontSize: 14)),
-              const SizedBox(height: 64),
-              _SlideToUnlockBar(
-                onUnlocked: () async {
-                  if (mounted) {
-                    await ModelDownloadService.markModelReady();
-                    if (mounted) {
-                      setState(() {
-                        _showSlideToUnlock = false;
-                        _isModelReady = true;
-                      });
-                      _loadPortfolioContext();
-                    }
-                  }
-                },
-              ),
-              const SizedBox(height: 16),
-              Text('slide to begin',
-                  style: TextStyle(
-                    color: DesignTokens.textMediumContrast
-                        .withValues(alpha: 0.4),
-                    fontSize: 11,
-                    letterSpacing: 1.5,
-                  )),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 // ─── Shimmer Thinking Widget ──────────────────────────────────────────────────

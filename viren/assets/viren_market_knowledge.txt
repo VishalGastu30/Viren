@@ -49,3 +49,50 @@ RETURN CALCULATIONS:
 - XIRR: annualised return accounting for timing of cash flows. Use for multi-trade holdings.
 - Unrealised P&L: (CMP - avg cost) * quantity
 - Realised P&L: (sell price - buy price) * quantity sold, minus charges
+
+GOLD MECHANICS:
+- Rainy day paradox: gold rises when everything else falls (safe haven).
+- Dollar inverse relationship: strong USD usually means weaker gold, and vice versa.
+- Margin call cascade: during severe market crashes, investors sell gold to cover equity margin calls, causing temporary gold drops.
+- Interest rate effect: high interest rates make non-yielding gold less attractive; rate cuts boost gold.
+- Historical patterns: sharp rallies during 2008 financial crisis and 2020 pandemic.
+
+SILVER MECHANICS:
+- Industrial vs Store-of-value: ~50-70% of silver demand is industrial (solar, electronics). It falls on manufacturing slowdowns.
+- High Beta: silver is more volatile than gold. It often follows gold's direction but with exaggerated moves.
+- Silver/Gold ratio: historically monitored to see if silver is under or overvalued relative to gold.
+
+EQUITY MACRO MECHANICS:
+- FII flows: Foreign Institutional Investors drive Indian market momentum. Consistent selling pressure usually caps Nifty upside.
+- Dollar Index (DXY) impact: a strong dollar pulls capital out of emerging markets like India.
+- RBI rate cycle: rate cuts boost equities (especially banking and auto); hikes cool them down.
+- India VIX: measures expected volatility. High VIX (>20) indicates fear and potential sharp moves.
+
+YESBANK CONTEXT:
+- 2020 Reconstruction: bailed out by a consortium led by SBI. Massive equity dilution occurred.
+- NPA sensitivity: highly sensitive to bad loans. The recovery thesis depends entirely on consistent profitability and NPA reduction.
+
+GENERAL CRASH DYNAMICS:
+- Risk-on/Risk-off: "Risk-on" means buying equities/crypto. "Risk-off" means moving to USD/Gold/Bonds.
+- Leverage feedback loops: massive forced selling triggers when algorithmic margins are breached, causing flash crashes irrespective of fundamentals.
+
+RISK DYNAMICS:
+- Risk-on environment: when global economic data is positive, central banks are dovish, and earnings are growing, investors favour riskier assets like equities, high-yield bonds, and emerging market currencies. Nifty and bank stocks typically rally.
+- Risk-off environment: when geopolitical tension rises, recession fears build, or central banks turn hawkish, capital flows into safe havens — US Treasuries, gold, and the US dollar. Emerging markets like India see FII selling, gold ETFs gain, and bank/NBFC stocks fall.
+- How to read it: if gold and USD are rising while equities are falling, that is a textbook risk-off move. If equities and commodity prices are rising together, that is risk-on.
+
+USD GOLD INR DYNAMICS:
+- The US dollar and gold have an inverse relationship. When the dollar strengthens (DXY rises), gold priced in dollars becomes more expensive for global buyers, reducing demand and pushing gold prices down.
+- For Indian investors holding gold ETFs like GOLDBEES, there is a dual effect: when the dollar rises, international gold falls, but the rupee also weakens against the dollar. The weaker rupee partially cushions the gold fall in INR terms.
+- Net effect for Indian gold ETF holders: (1) if dollar rises sharply and gold falls, your GOLDBEES will drop but less than international gold. (2) If dollar weakens, gold rises AND rupee strengthens, giving double benefit to your holdings.
+- Interest rates are the key driver: when the US Fed raises rates, dollar strengthens and gold weakens. When the Fed cuts or pauses, gold rallies.
+
+MARKET OUTLOOK FRAMEWORK:
+- Weekly market direction depends on: (1) FII/DII flow data (net buyers or sellers), (2) global cues from US markets overnight, (3) any RBI policy announcement or data release, (4) options expiry dynamics (Thursday settlements create volatility), (5) VIX levels — above 18 suggests caution, below 14 suggests complacency.
+- I do not have the ability to predict market direction. What I can tell you is how your portfolio is positioned for different scenarios.
+- For honest market commentary, I rely on news headlines from Reuters, Moneycontrol, and ET Markets when available. If those sources are unavailable, I will tell you plainly rather than speculate.
+
+FII DII FLOWS:
+- FII (Foreign Institutional Investors) are the largest market movers in India. Consistent FII selling (over 3-5 days) usually causes the Nifty to weaken, especially large-caps.
+- DII (Domestic Institutional Investors) often act as counter-buyers when FII sell, providing a floor. When both FII and DII are buying together, that is the strongest bullish signal.
+- The FII flows depend on global risk appetite, US bond yields, and the relative attractiveness of Indian equities vs other emerging markets.

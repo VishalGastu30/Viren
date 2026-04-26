@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'package:flutter/services.dart';
+import '../../core/ai/groq_service.dart';
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 import '../database/app_database.dart';
@@ -23,9 +23,6 @@ import 'alert_trigger_service.dart';
 class MacroEngine {
   final AppDatabase _db;
   late final AlertTriggerService _alertService;
-
-  static const _llmChannel = MethodChannel('com.viren.viren/pdf_crypto');
-
   // Macro-level RSS feeds — different from news feeds in RssFetcher
   // These are slower-moving, policy-level sources
   static const Map<String, String> _macroFeeds = {
@@ -55,16 +52,6 @@ class MacroEngine {
     final portfolioContext = _buildPortfolioContext(holdings);
     final dynamicKeywords = _buildDynamicKeywords(holdings);
 
-    String? modelPath;
-    try {
-      final basePath =
-          await _llmChannel.invokeMethod<String>('getModelPath');
-      modelPath =
-          '$basePath/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv1280.task';
-    } catch (_) {
-      return; // Model not available — skip silently
-    }
-
     // Fetch macro items from up to 2 feeds per run
     final macroItems = await _fetchMacroItems();
     if (macroItems.isEmpty) return;
@@ -80,7 +67,6 @@ class MacroEngine {
         final insight = await _reasonAboutMacroEvent(
           newsItem: item,
           portfolioContext: portfolioContext,
-          modelPath: modelPath,
         );
         if (insight != null) {
           await _alertService.createMacroAlert(
@@ -191,23 +177,19 @@ class MacroEngine {
     return keywords.any((kw) => text.contains(kw));
   }
 
-  /// Asks Qwen to reason about a macro event against the user's
+  /// Asks Groq to reason about a macro event against the user's
   /// specific portfolio composition.
   Future<Map<String, dynamic>?> _reasonAboutMacroEvent({
     required RssItem newsItem,
     required String portfolioContext,
-    required String modelPath,
   }) async {
-    final prompt =
+    final systemPrompt =
         '''You are an experienced Indian stock market investor with 20 years of experience.
 A retail investor's portfolio and a news event are shown below.
 Your job: reason like a seasoned investor — not a robot.
 
 Portfolio:
 $portfolioContext
-
-News: "${newsItem.title}"
-Details: "${newsItem.description}"
 
 Answer in this exact JSON format only, no other text:
 {"relevant": true/false, "symbol": "MOST_AFFECTED_SYMBOL_OR_null", "score": 1-10, "signal": "BUY_OPPORTUNITY/RISK/HOLD/NEUTRAL", "insight": "one sentence max"}
@@ -221,19 +203,20 @@ Rules:
 
 If not relevant to any holding: {"relevant": false, "symbol": null, "score": 0, "signal": "NEUTRAL", "insight": ""}''';
 
+    final prompt = '''News: "${newsItem.title}"
+Details: "${newsItem.description}"''';
+
     try {
-      final response = await _llmChannel.invokeMethod<String>('chat', {
-        'prompt': prompt,
-        'modelPath': modelPath,
-      });
-      if (response == null || response.isEmpty) return null;
-      final cleaned = response
-          .replaceAll('```json', '')
-          .replaceAll('```', '')
-          .trim();
-      final parsed = jsonDecode(cleaned) as Map<String, dynamic>;
+      final parsed = await GroqService.chatJson(
+        prompt: prompt,
+        systemPrompt: systemPrompt,
+        model: GroqService.lightModel,
+      );
+
+      if (parsed == null) return null;
       if (parsed['relevant'] != true) return null;
       if ((parsed['score'] as int? ?? 0) < 5) return null;
+
       return {
         'symbol': parsed['symbol'] as String?,
         'insight': parsed['insight'] as String? ?? newsItem.title,
@@ -246,7 +229,7 @@ If not relevant to any holding: {"relevant": false, "symbol": null, "score": 0, 
   }
 
   String _buildPortfolioContext(List<Holding> holdings) {
-    return SymbolClassifier.buildPortfolioQwenContext(holdings);
+    return SymbolClassifier.buildPortfolioGroqContext(holdings);
   }
 
   List<String> _buildDynamicKeywords(List<Holding> holdings) {

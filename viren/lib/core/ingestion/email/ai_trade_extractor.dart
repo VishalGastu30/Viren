@@ -4,7 +4,7 @@ import 'dart:developer' as developer;
 
 import 'broker_email_parser.dart';
 import '../../database/enums.dart';
-import '../../ai/model_download_service.dart';
+import '../../ai/groq_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AI Trade Extractor — On-Device Qwen/Gemma LLM for Trade Extraction
@@ -41,7 +41,7 @@ class UnresolvedTrade {
 }
 
 class AiTradeExtractor {
-  static const _channel = MethodChannel('com.viren.viren/pdf_crypto');
+
 
   AiTradeExtractor();
 
@@ -60,16 +60,11 @@ class AiTradeExtractor {
     developer.log('[QWEN_FALLBACK] Starting fallback parse for $filename (${extractedText.length} chars)', name: 'AiTradeExtractor');
 
     final prompt = '''
-<|im_start|>system
-You are a trade extraction engine. Return only valid JSON arrays. No explanation. No markdown.<|im_end|>
-<|im_start|>user
 Extract trades from this NSE Direct PDF text.
 Return ONLY JSON array, no explanation:
 [{"symbol":"","type":"BUY or SELL","qty":0,"price":0,"tradeValue":0}]
 If none found return: []
 TEXT: $extractedText
-<|im_end|>
-<|im_start|>assistant
 ''';
 
     // Step 1: Parse
@@ -113,11 +108,11 @@ TEXT: $extractedText
   /// Invoke Qwen and return parsed JSON array of trade maps.
   Future<List<Map<String, dynamic>>> _invokeQwen(String prompt, String filename) async {
     try {
-      final modelPath = await ModelDownloadService.getModelPath();
-      final responseText = await _channel.invokeMethod<String>('extractAiTrades', {
-        'promptText': prompt,
-        'modelPath': modelPath,
-      });
+      final responseText = await GroqService.chat(
+        prompt: prompt,
+        systemPrompt: "You are a trade extraction engine. Return only valid JSON arrays. No explanation. No markdown.",
+        model: GroqService.lightModel,
+      );
 
       if (responseText == null || responseText.isEmpty) {
         developer.log('[QWEN] Empty response from model', name: 'AiTradeExtractor');
@@ -254,9 +249,6 @@ TEXT: $extractedText
         : candidate.rawText;
 
     final prompt = '''
-<|im_start|>system
-You are a precision financial extraction system. Return only formatting valid JSON arrays. No explanation. No markdown.<|im_end|>
-<|im_start|>user
 Your exact job is to extract trades from a messy broker "$documentTypeLabel" PDF.
 
 RULES:
@@ -272,16 +264,14 @@ SCHEMA:
 
 TEXT TO EXTRACT FROM:
 $truncatedText
-<|im_end|>
-<|im_start|>assistant
 ''';
 
     try {
-      final modelPath = await ModelDownloadService.getModelPath();
-      final responseText = await _channel.invokeMethod<String>('extractAiTrades', {
-        'promptText': prompt,
-        'modelPath': modelPath,
-      });
+      final responseText = await GroqService.chat(
+        prompt: prompt,
+        systemPrompt: "You are a precision financial extraction system. Return only formatting valid JSON arrays. No explanation. No markdown.",
+        model: GroqService.lightModel,
+      );
 
       if (responseText == null || responseText.isEmpty) return [];
 
